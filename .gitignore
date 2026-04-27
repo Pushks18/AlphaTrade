@@ -1,0 +1,5 @@
+.env
+.env.local
+**/cache/
+**/out/
+**/.DS_Store

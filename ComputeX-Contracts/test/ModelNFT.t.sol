@@ -1,0 +1,177 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import {Test} from "forge-std/Test.sol";
+import {GPUMarketplace} from "../src/GPUMarketplace.sol";
+import {ModelNFT} from "../src/ModelNFT.sol";
+
+contract ModelNFTTest is Test {
+    GPUMarketplace internal market;
+    ModelNFT internal nft;
+
+    address internal owner    = address(0xA11CE);
+    address internal provider = address(0xB0B);
+    address internal renter   = address(0xCAFE);
+    address internal stranger = address(0xDEAD);
+
+    uint256 internal constant PRICE = 0.01 ether;
+
+    string internal constant MODEL_CID = "bafymodel";
+    string internal constant PROOF_CID = "bafyproof";
+    string internal constant DESC      = "Trend-following predictor";
+
+    event ModelMinted(
+        uint256 indexed tokenId,
+        uint256 indexed jobId,
+        address indexed creator,
+        string modelCID,
+        string proofCID
+    );
+    event PerformanceUpdated(uint256 indexed tokenId, uint256 score);
+
+    function setUp() public {
+        // Deploy stack as owner
+        vm.startPrank(owner);
+        market = new GPUMarketplace(owner);
+        nft = new ModelNFT(owner, address(market));
+        market.setModelNFT(address(nft));
+        vm.stopPrank();
+
+        vm.deal(renter, 100 ether);
+    }
+
+    // helpers ---------------------------------------------------------
+
+    function _list() internal returns (uint256 gpuId) {
+        vm.prank(provider);
+        gpuId = market.listGPU("ipfs://specs", PRICE);
+    }
+
+    function _rentAndComplete() internal returns (uint256 jobId) {
+        uint256 gpuId = _list();
+        vm.prank(renter);
+        jobId = market.rentGPU{value: PRICE}(gpuId, 1);
+        vm.prank(provider);
+        market.completeJob(jobId);
+    }
+
+    // construction ----------------------------------------------------
+
+    function test_deploys_withCorrectMetadata() public view {
+        assertEq(nft.name(), "ComputeX Model");
+        assertEq(nft.symbol(), "CXMODEL");
+        assertEq(nft.owner(), owner);
+        assertEq(address(nft.gpuMarketplace()), address(market));
+        assertEq(nft.nextTokenId(), 1);
+    }
+
+    function test_deploys_revertsOnZeroMarketplace() public {
+        vm.expectRevert(bytes("Model: zero marketplace"));
+        new ModelNFT(owner, address(0));
+    }
+
+    // mintModel happy path -------------------------------------------
+
+    function test_mintModel_mintsToRenter_andStoresMetadata() public {
+        uint256 jobId = _rentAndComplete();
+
+        vm.expectEmit(true, true, true, true);
+        emit ModelMinted(1, jobId, renter, MODEL_CID, PROOF_CID);
+
+        // Permissionless: anyone can submit the CIDs.
+        vm.prank(stranger);
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+
+        assertEq(tokenId, 1);
+        assertEq(nft.ownerOf(tokenId), renter);
+        assertEq(nft.creator(tokenId), renter);
+        assertEq(nft.jobIdOfToken(tokenId), jobId);
+        assertEq(nft.tokenIdForJob(jobId), tokenId);
+        assertTrue(market.modelMinted(jobId));
+
+        (string memory mCID, string memory pCID, string memory desc, uint256 createdAt) =
+            nft.models(tokenId);
+        assertEq(mCID, MODEL_CID);
+        assertEq(pCID, PROOF_CID);
+        assertEq(desc, DESC);
+        assertEq(createdAt, block.timestamp);
+    }
+
+    // mintModel reverts ----------------------------------------------
+
+    function test_mintModel_revertsIfJobNotCompleted() public {
+        uint256 gpuId = _list();
+        vm.prank(renter);
+        uint256 jobId = market.rentGPU{value: PRICE}(gpuId, 1);
+
+        vm.expectRevert(bytes("Job: not completed"));
+        nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+    }
+
+    function test_mintModel_revertsOnDuplicate() public {
+        uint256 jobId = _rentAndComplete();
+        nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+
+        vm.expectRevert(bytes("Job: model already minted"));
+        nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+    }
+
+    function test_mintModel_revertsOnEmptyCIDs() public {
+        uint256 jobId = _rentAndComplete();
+
+        vm.expectRevert(bytes("Model: empty modelCID"));
+        nft.mintModel(jobId, "", PROOF_CID, DESC);
+
+        vm.expectRevert(bytes("Model: empty proofCID"));
+        nft.mintModel(jobId, MODEL_CID, "", DESC);
+    }
+
+    // setPerformanceScore --------------------------------------------
+
+    function test_setPerformanceScore_updatesAndEmits() public {
+        uint256 jobId = _rentAndComplete();
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+
+        vm.expectEmit(true, false, false, true);
+        emit PerformanceUpdated(tokenId, 4242);
+
+        vm.prank(owner);
+        nft.setPerformanceScore(tokenId, 4242);
+
+        assertEq(nft.performanceScore(tokenId), 4242);
+    }
+
+    function test_setPerformanceScore_revertsForNonOwner() public {
+        uint256 jobId = _rentAndComplete();
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+
+        vm.prank(stranger);
+        vm.expectRevert();
+        nft.setPerformanceScore(tokenId, 1);
+    }
+
+    function test_setPerformanceScore_revertsForUnknownToken() public {
+        vm.prank(owner);
+        vm.expectRevert(bytes("Model: nonexistent token"));
+        nft.setPerformanceScore(999, 1);
+    }
+
+    // tokenURI --------------------------------------------------------
+
+    function test_tokenURI_isInlineBase64Json() public {
+        uint256 jobId = _rentAndComplete();
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+
+        string memory uri = nft.tokenURI(tokenId);
+        // Prefix sanity check; full base64 decoding is out of scope for foundry.
+        assertEq(
+            bytes(uri).length > bytes("data:application/json;base64,").length,
+            true
+        );
+    }
+
+    function test_tokenURI_revertsForUnknownToken() public {
+        vm.expectRevert(bytes("Model: nonexistent token"));
+        nft.tokenURI(123);
+    }
+}

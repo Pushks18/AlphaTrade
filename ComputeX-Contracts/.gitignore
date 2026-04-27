@@ -1,0 +1,12 @@
+# Foundry
+out/
+cache/
+.gas-snapshot
+
+# Local env / secrets
+.env
+.env.local
+
+# Broadcast cache contains sensitive sender info; keep run artifacts but
+# strip the cached sensitive-values directory.
+cache/Interact.s.sol/
