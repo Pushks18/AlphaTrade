@@ -1,0 +1,21 @@
+{
+  "name": "computex-backend",
+  "version": "1.0.0",
+  "description": "ComputeX offchain compute orchestrator — Person B",
+  "scripts": {
+    "orchestrator": "ts-node src/orchestrator.ts",
+    "agent": "ts-node src/agent.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "ethers": "^6.13.5",
+    "axios": "^1.7.9",
+    "dotenv": "^16.4.7",
+    "form-data": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.6",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}
