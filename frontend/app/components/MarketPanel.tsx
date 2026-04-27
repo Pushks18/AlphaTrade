@@ -62,8 +62,8 @@ export default function MarketPanel({ wallet, chainId }: Props) {
       const { mkt } = await getContracts(true);
       const raw = await mkt.listings(BigInt(buyId));
       const p   = raw[2];
-      const fee = (p * 250n) / 10000n;
-      const roy = (p * 500n) / 10000n;
+      const fee = (p * BigInt(250)) / BigInt(10000);
+      const roy = (p * BigInt(500)) / BigInt(10000);
       addLog(`Buying token #${buyId} for ${ethers.formatEther(p)} ETH…`);
       addLog(`Protocol fee: ${ethers.formatEther(fee)} ETH (2.5%)`, "info");
       addLog(`Creator royalty: ${ethers.formatEther(roy)} ETH (5%)`, "info");
