@@ -1,8 +1,8 @@
-# ⚡ ComputeX
+# ⚡ AlphaTrade
 
 > **Decentralized GPU Compute × AI Model Ownership × Autonomous Trading**
 
-ComputeX is a decentralized platform built on 0G Chain. It enables users to rent GPU compute power, train AI models offchain, trustlessly mint those models as **ERC-7857 iNFTs** (Intelligent NFTs), and deploy them as autonomous trading agents using KeeperHub and Uniswap.
+AlphaTrade is a decentralized platform built on 0G Chain. It enables users to rent GPU compute power, train AI models offchain, trustlessly mint those models as **ERC-7857 iNFTs** (Intelligent NFTs), and deploy them as autonomous trading agents using KeeperHub and Uniswap.
 
 ---
 
