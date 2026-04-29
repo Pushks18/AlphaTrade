@@ -81,4 +81,36 @@ contract PerformanceOracle {
         emit SignerRotated(feedSigner, next);
         feedSigner = next;
     }
+
+    // ---------------------------------------------------------------------
+    // Audit submission
+    // ---------------------------------------------------------------------
+
+    struct AuditSubmission {
+        uint256       tokenId;
+        uint256       epoch;
+        bytes32       modelWeightsHash;
+        bytes32       outputsHash;
+        int256[]      outputs;            // cleartext, used by Sharpe in C3
+        uint256[]     publicInputs;       // [weightsHash, outputsHash, priceFeedRoot]
+        bytes         snarkProof;
+        bytes32[]     priceFeedSiblings;  // per-bar Merkle siblings, used in C3
+        uint32[]      priceFeedIndexes;   // used in C3
+        int256[]      priceFeedBars;      // used in C3
+    }
+
+    event AuditAccepted(uint256 indexed tokenId, uint256 indexed epoch, uint256 sharpeBps, uint256 nTrades);
+
+    /// @notice Submit an EZKL audit proof for a model.
+    /// @dev    C2 implements only proof + epoch-root checks. C3 layers on
+    ///         outputs-hash verification, Merkle-proofs of price bars, and
+    ///         deterministic Sharpe recomputation.
+    function submitAudit(AuditSubmission calldata sub) external {
+        bytes32 root = priceFeedRoot[sub.epoch];
+        require(root != bytes32(0), "Oracle: unknown epoch");
+        require(sub.publicInputs.length == 3, "Oracle: bad pub inputs");
+        require(sub.publicInputs[2] == uint256(root), "Oracle: root mismatch");
+        require(verifier.verifyProof(sub.snarkProof, sub.publicInputs), "Oracle: bad proof");
+        emit AuditAccepted(sub.tokenId, sub.epoch, 0, 0);
+    }
 }
