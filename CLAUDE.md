@@ -2,12 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project: AlphaTrade / ComputeX
+## Project: AlphaTrade
 
-Decentralized GPU compute + AI-model marketplace. Person A's scope (this repo)
-is the **onchain layer**: GPU rental escrow, model NFT minting, secondary
-model marketplace. Off-chain training, zkML proof generation, and 0G Storage
-uploads are separate workstreams (Persons B / C).
+Decentralized GPU compute + AI-trading-model marketplace with autonomous
+meta-agents (ETHGlobal Open Agents, approach C). Single-developer scope —
+**all layers live in this repo**: onchain marketplace (Solidity), zkML
+verification pipeline (Python + EZKL), backend orchestrator (TypeScript),
+and a planned meta-agent layer + frontend.
+
+**Master plan:** `docs/superpowers/plans/2026-04-29-master-plan.md` —
+read this first. It captures the full flow, feature list, status, and
+the 3-plan structure (Verification Layer ✅ / Meta-Agent Layer ⏳ / Polish ⏳).
 
 The actual contracts live in `ComputeX-Contracts/`. Run `forge` commands from
 that subdirectory, not the AlphaTrade root.
@@ -39,19 +44,28 @@ Deploy + verify (one-shot): see `ComputeX-Contracts/DEPLOY.md`.
 
 ## Architecture (the part that matters)
 
-Three contracts, one trust loop:
+Six contracts, one trust loop:
 
 ```
 GPUMarketplace ── completeJob ──► jobCompleted[jobId]=true, jobOwner[jobId]=renter
        │
        │ consumeMintRight(jobId)   ◄── ONLY callable by ModelNFT (modelNFT addr)
-       ▼                              returns jobOwner, flips modelMinted[jobId]
-ModelNFT.mintModel(jobId,...)     ◄── permissionless; pulls owner atomically
-       │
-       │ creator(tokenId) = renter  (immutable; persists across resales)
        ▼
-ModelMarketplace.buyModel  ──► splits ETH: royalty → creator, fee → recipient, rest → seller
+ModelNFT.mintModel (payable, with creator stake)
+       │ ───────► CreatorRegistry.recordMint  (soulbound SBT)
+       ▼
+PerformanceOracle.submitAudit  ── verifies SNARK (EzklVerifier / Halo2)
+       │                       ── checks epoch feed root + ECDSA sig
+       │                       ── recomputes Sharpe (bps) on-chain
+       ▼
+ModelNFT.setPerformanceScore  (oracle-gated)
+       │ ───────► CreatorRegistry.recordScore
+       ▼
+ModelMarketplace.buyModel  ──► splits ETH: royalty 5% → creator, fee 2.5% → recipient, rest → seller
                                 contract holds ZERO eth between txs (invariant tested)
+
+Slashing path: PerformanceOracle.slash → ModelNFT.slashStake (oracle-gated)
+               → burns ETH to 0xdEaD → CreatorRegistry.recordSlash
 ```
 
 Critical invariants enforced by tests, do not break:
@@ -84,30 +98,29 @@ Critical invariants enforced by tests, do not break:
   Fees only apply on the model marketplace (royalty 5% / fee 2.5%, both
   capped at 10%).
 
-## Person-A deliverables status
+## Status
 
-| Item | State |
+**Plan 1 — Verification Layer:** 17/18 tasks ✅ (G1 end-to-end test pending scope decision)
+**Plan 2 — Meta-Agent Layer:** ⏳ not started
+**Plan 3 — Production Polish:** ⏳ not started
+
+Test gates: **121/121 forge** + **13/13 pytest** + **11/11 TS smoke** all green.
+
+| Component | State |
 |---|---|
-| GPUMarketplace.sol         | ✅ implemented + 32 tests |
-| ModelNFT.sol               | ✅ implemented + 11 tests |
-| ModelMarketplace.sol       | ✅ implemented + 27 tests |
-| Deploy.s.sol               | ✅ wires all three |
-| Interact.s.sol (e2e proof) | ✅ runs end-to-end on local anvil |
-| ABIs exported              | ✅ `abi/*.json` |
-| Testnet deploy             | ⏳ needs user's `PRIVATE_KEY` + RPC |
-| Verified explorer links    | ⏳ produced by `--verify` flag on deploy |
+| GPUMarketplace / ModelNFT / ModelMarketplace | ✅ |
+| PerformanceOracle (audit + slash + Sharpe-bps) | ✅ |
+| CreatorRegistry (soulbound SBT) | ✅ |
+| EzklVerifier (auto-generated Halo2) | ✅ |
+| Python zkML pipeline (AlphaMLP, EZKL, ~38s, 29 KB proofs) | ✅ |
+| TS orchestrator + audit-submitter | ✅ |
+| MetaAgentRegistry / MetaAgentVault | ⏳ Plan 2 |
+| KeeperHub + Uniswap V3 trading runtime | ⏳ Plan 2 |
+| Render/RunPod cloud GPU adapter | ⏳ Plan 3 |
+| Frontend additions (model browser, leaderboard) | ⏳ Plan 3 |
 
-See `ComputeX-Contracts/INTERACTION_PROOF.md` for the captured anvil run
-(tx hashes, addresses, per-step state).
-
-## What NOT to add to this repo
-
-- New contracts. Person A's surface is locked at 3.
-- AMM / orderbook for the model marketplace. Fixed-price by design.
-- ERC-20 payment paths. ETH only for the MVP.
-- Backend orchestration code. That's Person B.
-- Frontend. That's a separate workstream — only add a thin demo page if
-  explicitly asked.
+Known v2 follow-ups documented in master plan §5 (EZKL public-input bridge,
+multi-level Merkle, output/bars reshape, macOS arm64 SRS bug).
 
 ## Workspace context
 
