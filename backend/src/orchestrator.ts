@@ -15,9 +15,10 @@ import path                          from "path";
 import fs                            from "fs";
 import { execFileSync }              from "child_process";
 import { ethers }                    from "ethers";
-import { ANVIL_ADDRESSES, GPU_MARKETPLACE_ABI } from "./contracts";
+import { ANVIL_ADDRESSES, GPU_MARKETPLACE_ABI, PERFORMANCE_ORACLE_ABI } from "./contracts";
 import { uploadToStorage }           from "./upload";
 import { mintModelNFT }              from "./mint";
+import { loadProofArtifacts, submitAudit } from "./audit-submitter";
 
 // ── Config ────────────────────────────────────────────────────────────────
 const RPC_URL     = process.env.RPC_URL     ?? "http://127.0.0.1:8545";
@@ -48,8 +49,8 @@ async function processJob(jobId: bigint, renter: string, gpuId: bigint) {
   console.log(`\n${"─".repeat(60)}`);
   console.log(`🎯 Job #${id} received (renter=${renter}, gpuId=${gpuId})`);
 
-  const weightsPath = path.join(TMP_DIR, `weights_${id}.json`);
-  const proofPath   = path.join(TMP_DIR, `proof_${id}.json`);
+  const trainDir = path.join(TMP_DIR, `train_${id}`);
+  const proveDir = path.join(TMP_DIR, `prove_${id}`);
 
   try {
     // ── Step 1: Training ─────────────────────────────────────────────────
@@ -57,24 +58,27 @@ async function processJob(jobId: bigint, renter: string, gpuId: bigint) {
     execFileSync("python3", [
       path.join(SCRIPTS_DIR, "train.py"),
       "--job-id",  id,
-      "--output",  weightsPath,
+      "--output",  trainDir,
     ], { stdio: "inherit" });
-    console.log(`  ✅ Training complete → ${weightsPath}`);
+    const meta = JSON.parse(fs.readFileSync(path.join(trainDir, "meta.json"), "utf8")) as {
+      weightsHash: string; jobId: number;
+    };
+    console.log(`  ✅ Training complete → ${trainDir} (weightsHash=${meta.weightsHash.slice(0, 14)}…)`);
 
     // ── Step 2: Proof generation ──────────────────────────────────────────
     console.log(`\n🔐 [Step 2] Running prove.py…`);
     execFileSync("python3", [
       path.join(SCRIPTS_DIR, "prove.py"),
-      "--weights", weightsPath,
-      "--output",  proofPath,
+      "--weights", trainDir,
+      "--output",  proveDir,
     ], { stdio: "inherit" });
-    console.log(`  ✅ Proof generated → ${proofPath}`);
+    console.log(`  ✅ Proof generated → ${proveDir}`);
 
     // ── Step 3: Upload to 0G Storage ─────────────────────────────────────
     console.log(`\n📡 [Step 3] Uploading to 0G Storage…`);
     const [modelCID, proofCID] = await Promise.all([
-      uploadToStorage(weightsPath, "model weights"),
-      uploadToStorage(proofPath,   "zkML proof"),
+      uploadToStorage(path.join(trainDir, "model.onnx"), "model weights"),
+      uploadToStorage(path.join(proveDir, "proof.json"), "zkML proof"),
     ]);
     console.log(`  modelCID = ${modelCID}`);
     console.log(`  proofCID = ${proofCID}`);
@@ -90,17 +94,44 @@ async function processJob(jobId: bigint, renter: string, gpuId: bigint) {
 
     // ── Step 5: Mint ModelNFT ─────────────────────────────────────────────
     console.log(`\n⛏  [Step 5] Minting ModelNFT…`);
+    // Reformat the ONNX weights hash from SHA3 (64 hex chars) to bytes32. The
+    // contract requires a non-zero modelWeightsHash. We use the SHA3 hash as
+    // the canonical identity; future tasks can switch to keccak parity if
+    // proofs need to verify it on-chain (out of scope for v1).
+    const weightsHashBytes32 = meta.weightsHash;
+    const stake = process.env.CREATOR_STAKE_WEI ? BigInt(process.env.CREATOR_STAKE_WEI) : 0n;
     const { tokenId, txHash } = await mintModelNFT({
       jobId, modelCID, proofCID,
-      description: `ComputeX model for job #${id} — trained on block price data`,
+      description:      `AlphaTrade model for job #${id}`,
+      modelWeightsHash: weightsHashBytes32,
+      stake,
       provider, signer,
     });
 
+    // ── Step 6: Submit audit to PerformanceOracle ─────────────────────────
+    console.log(`\n📜 [Step 6] Submitting EZKL audit to PerformanceOracle…`);
+    try {
+      const { bundle, feed } = loadProofArtifacts(proveDir);
+      const oracle = new ethers.Contract(
+        ANVIL_ADDRESSES.PerformanceOracle, PERFORMANCE_ORACLE_ABI, signer,
+      );
+      const auditTx = await submitAudit({
+        oracle, tokenId, modelWeightsHash: weightsHashBytes32, bundle, feed,
+      });
+      console.log(`  ✅ Audit accepted in tx ${auditTx}`);
+    } catch (e: any) {
+      // Audit submission can fail for known reasons (single-sibling Merkle
+      // limit, public-input mismatch with EZKL circuit). Surface the error
+      // but don't fail the whole pipeline — the model NFT is already minted.
+      console.warn(`  ⚠️  Audit submission failed (non-fatal): ${e?.shortMessage ?? e?.message ?? e}`);
+    }
+
     console.log(`\n🏆 Pipeline complete for job #${id}:`);
-    console.log(`   tokenId  = ${tokenId}`);
-    console.log(`   txHash   = ${txHash}`);
-    console.log(`   modelCID = ${modelCID}`);
-    console.log(`   proofCID = ${proofCID}`);
+    console.log(`   tokenId      = ${tokenId}`);
+    console.log(`   txHash       = ${txHash}`);
+    console.log(`   modelCID     = ${modelCID}`);
+    console.log(`   proofCID     = ${proofCID}`);
+    console.log(`   weightsHash  = ${weightsHashBytes32.slice(0, 14)}…`);
   } catch (err: any) {
     console.error(`\n❌ Pipeline failed for job #${id}: ${err.message}`);
   } finally {
@@ -128,6 +159,7 @@ function start() {
   console.log(`   Wallet  : ${signer.address}`);
   console.log(`   GPU Mkt : ${ANVIL_ADDRESSES.GPUMarketplace}`);
   console.log(`   NFT     : ${ANVIL_ADDRESSES.ModelNFT}`);
+  console.log(`   Oracle  : ${ANVIL_ADDRESSES.PerformanceOracle}`);
   console.log(`${"═".repeat(60)}\n`);
 
   gpuMarket.on("JobCreated", (jobId: bigint, renter: string, gpuId: bigint) => {

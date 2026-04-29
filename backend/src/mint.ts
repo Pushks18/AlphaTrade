@@ -13,14 +13,16 @@ import { ethers }  from "ethers";
 import { ANVIL_ADDRESSES, MODEL_NFT_ABI } from "./contracts";
 
 export async function mintModelNFT(params: {
-  jobId:     bigint;
-  modelCID:  string;
-  proofCID:  string;
-  description: string;
-  provider:  ethers.JsonRpcProvider;
-  signer:    ethers.Wallet;
+  jobId:            bigint;
+  modelCID:         string;
+  proofCID:         string;
+  description:      string;
+  modelWeightsHash: string;   // 0x… 32-byte hex; from train.py meta.json
+  stake?:           bigint;   // optional creator stake (wei) sent with mint
+  provider:         ethers.JsonRpcProvider;
+  signer:           ethers.Wallet;
 }): Promise<{ tokenId: bigint; txHash: string }> {
-  const { jobId, modelCID, proofCID, description, provider, signer } = params;
+  const { jobId, modelCID, proofCID, description, modelWeightsHash, stake, provider, signer } = params;
 
   const nft = new ethers.Contract(
     ANVIL_ADDRESSES.ModelNFT,
@@ -28,15 +30,17 @@ export async function mintModelNFT(params: {
     signer,
   );
 
-  // Belt-and-braces: check if already minted
   const existing = await nft.tokenIdForJob(jobId);
   if (existing !== 0n) {
     console.log(`  ℹ️  Job #${jobId} already has tokenId=${existing}, skipping mint`);
     return { tokenId: existing, txHash: "(already minted)" };
   }
 
-  console.log(`  ⛏  Minting ModelNFT for job #${jobId}…`);
-  const tx = await nft.mintModel(jobId, modelCID, proofCID, description);
+  console.log(`  ⛏  Minting ModelNFT for job #${jobId} (stake=${stake ?? 0n} wei)…`);
+  const tx = await nft.mintModel(
+    jobId, modelCID, proofCID, description, modelWeightsHash,
+    { value: stake ?? 0n },
+  );
   console.log(`  Tx: ${tx.hash}`);
   const rc = await tx.wait();
 
