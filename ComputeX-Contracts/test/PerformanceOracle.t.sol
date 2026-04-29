@@ -167,4 +167,81 @@ contract PerformanceOracleAuditTest is Test {
         oracle.submitAudit(s);
         assertEq(nft.scores(1), 0);
     }
+
+    function test_submitAudit_recordsLastSharpeAndEpoch() public {
+        PerformanceOracle.AuditSubmission memory s = _validSubmission();
+        oracle.submitAudit(s);
+        assertEq(oracle.lastSharpe(1), 0); // flat
+        assertEq(oracle.lastEpoch(1),  1);
+    }
+
+    // C4 — slashing -------------------------------------------------
+
+    event Slashed(uint256 indexed tokenId, address indexed slasher, uint256 stakeSplitToSlasher);
+
+    function test_setSlashTolerance_admin_works() public {
+        vm.prank(ADMIN);
+        oracle.setSlashTolerance(50);
+        assertEq(oracle.slashToleranceBps(), 50);
+    }
+
+    function test_setSlashTolerance_revertsForNonAdmin() public {
+        vm.prank(address(0xBAD));
+        vm.expectRevert(bytes("Oracle: not admin"));
+        oracle.setSlashTolerance(50);
+    }
+
+    function test_setSlashTolerance_revertsAboveCeiling() public {
+        vm.prank(ADMIN);
+        vm.expectRevert(bytes("Oracle: tolerance too large"));
+        oracle.setSlashTolerance(2_001);
+    }
+
+    function test_slash_revertsIfNoPriorAudit() public {
+        PerformanceOracle.AuditSubmission memory s = _validSubmission();
+        vm.expectRevert(bytes("Oracle: no prior audit"));
+        oracle.slash(1, payable(address(0xBEEF)), s);
+    }
+
+    function test_slash_revertsBelowTolerance() public {
+        // Honest audit puts lastSharpe=0; slasher submits same flat fixture
+        // → diff = 0 → below default 200 bps tolerance.
+        oracle.submitAudit(_validSubmission());
+        PerformanceOracle.AuditSubmission memory challenge = _validSubmission();
+        vm.expectRevert(bytes("Oracle: within tolerance"));
+        oracle.slash(1, payable(address(0xBEEF)), challenge);
+    }
+
+    function test_slash_revertsOnTokenIdMismatch() public {
+        oracle.submitAudit(_validSubmission());
+        PerformanceOracle.AuditSubmission memory challenge = _validSubmission();
+        challenge.tokenId = 2;
+        vm.expectRevert(bytes("Oracle: tokenId mismatch"));
+        oracle.slash(1, payable(address(0xBEEF)), challenge);
+    }
+
+    function test_slash_callsSlashStakeOnDivergence() public {
+        // First, a normal audit so lastEpoch[1] is set.
+        oracle.submitAudit(_validSubmission());
+
+        // Force a divergent prior Sharpe so the challenger's sharpe (=0)
+        // differs by more than the tolerance. We can't reach this state
+        // organically with a 2-leaf flat-market fixture (single-sibling
+        // Merkle proofs are limited to 2 bars, where Sharpe always = 0),
+        // so we patch the storage slot. This is a test-only shortcut;
+        // production divergence comes from genuinely contradicting audits
+        // once multi-level proofs land in a follow-up task.
+        bytes32 slot = keccak256(abi.encode(uint256(1), uint256(4))); // lastSharpe[1] @ slot 4
+        vm.store(address(oracle), slot, bytes32(uint256(500))); // > 200 bps tolerance
+
+        address payable slasher = payable(address(0xBEEF));
+        PerformanceOracle.AuditSubmission memory challenge = _validSubmission();
+
+        vm.expectEmit(true, true, false, true);
+        emit Slashed(1, slasher, nft.slashPaidStub());
+        oracle.slash(1, slasher, challenge);
+
+        assertEq(nft.lastSlasher(1),    slasher);
+        assertEq(nft.lastSlasherBps(1), 8000);
+    }
 }

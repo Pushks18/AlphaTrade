@@ -23,6 +23,11 @@ interface IModelNFTOracleHook {
     );
 }
 
+interface IModelNFTSlash {
+    function slashStake(uint256 tokenId, address payable slasher, uint16 slasherBps)
+        external returns (uint256 paid);
+}
+
 /// @title  PerformanceOracle
 /// @notice Accepts EZKL audit submissions for model NFTs, verifies them
 ///         against a protocol-signed price feed, and writes resulting Sharpe
@@ -40,9 +45,22 @@ contract PerformanceOracle {
     /// @notice epoch => signed Merkle root of the OHLCV slice for that epoch.
     mapping(uint256 => bytes32) public priceFeedRoot;
 
+    /// @notice Tolerance in bps below which two audits can disagree without
+    ///         slashing. Default 200 bps. Capped at 2000 by the setter.
+    uint256 public slashToleranceBps = 200;
+
+    /// @notice tokenId => last accepted Sharpe (bps). Reset to a fresh value
+    ///         on every successful submitAudit.
+    mapping(uint256 => uint256) public lastSharpe;
+    /// @notice tokenId => epoch of the last accepted Sharpe. Zero means
+    ///         "no prior audit," which the slasher path requires to be set.
+    mapping(uint256 => uint256) public lastEpoch;
+
     event FeedRootPublished(uint256 indexed epoch, bytes32 root);
     event AdminRotated(address indexed previous, address indexed next);
     event SignerRotated(address indexed previous, address indexed next);
+    event SlashTolerance(uint256 newToleranceBps);
+    event Slashed(uint256 indexed tokenId, address indexed slasher, uint256 stakeSplitToSlasher);
 
     modifier onlyAdmin() {
         require(msg.sender == admin, "Oracle: not admin");
@@ -112,20 +130,63 @@ contract PerformanceOracle {
     function submitAudit(AuditSubmission calldata sub) external {
         bytes32 root = priceFeedRoot[sub.epoch];
         require(root != bytes32(0), "Oracle: unknown epoch");
+
+        (uint256 sharpeBps, uint256 nTrades) = _runChecks(sub, root);
+
+        lastSharpe[sub.tokenId] = sharpeBps;
+        lastEpoch[sub.tokenId]  = sub.epoch;
+
+        IModelNFTOracleHook(modelNFT).setPerformanceScore(sub.tokenId, sharpeBps);
+        emit AuditAccepted(sub.tokenId, sub.epoch, sharpeBps, nTrades);
+    }
+
+    /// @notice Submit a contradicting audit on the same epoch. If the freshly
+    ///         verified Sharpe diverges from the recorded one beyond
+    ///         `slashToleranceBps`, the model NFT's creator stake is split:
+    ///         slasher receives the "slasherBps" portion, the rest is burned.
+    /// @dev    The slasher pays the gas to challenge; in production they're
+    ///         incentivized by their cut of the stake.
+    function slash(uint256 tokenId, address payable slasher, AuditSubmission calldata sub) external {
+        require(lastEpoch[tokenId] != 0,             "Oracle: no prior audit");
+        require(lastEpoch[tokenId] == sub.epoch,     "Oracle: epoch mismatch");
+        require(sub.tokenId        == tokenId,       "Oracle: tokenId mismatch");
+
+        bytes32 root = priceFeedRoot[sub.epoch];
+        require(root != bytes32(0), "Oracle: unknown epoch");
+
+        (uint256 challengerSharpe, ) = _runChecks(sub, root);
+
+        uint256 prior = lastSharpe[tokenId];
+        uint256 diff  = prior > challengerSharpe ? prior - challengerSharpe
+                                                 : challengerSharpe - prior;
+        require(diff > slashToleranceBps, "Oracle: within tolerance");
+
+        uint256 paid = IModelNFTSlash(modelNFT).slashStake(tokenId, slasher, 8000); // 80%
+        emit Slashed(tokenId, slasher, paid);
+    }
+
+    function setSlashTolerance(uint256 bps) external onlyAdmin {
+        require(bps <= 2_000, "Oracle: tolerance too large");
+        slashToleranceBps = bps;
+        emit SlashTolerance(bps);
+    }
+
+    /// @dev Mirrors the original submitAudit pipeline. Called by both
+    ///      submitAudit and slash so the two paths can never drift.
+    function _runChecks(AuditSubmission calldata sub, bytes32 root)
+        private view returns (uint256 sharpeBps, uint256 nTrades)
+    {
         require(sub.publicInputs.length == 3, "Oracle: bad pub inputs");
         require(sub.publicInputs[2] == uint256(root), "Oracle: root mismatch");
 
-        // Bind the proof to the on-chain model identity.
         (, , , , , , , , bytes32 onChainHash)
             = IModelNFTOracleHook(modelNFT).models(sub.tokenId);
         require(onChainHash == sub.modelWeightsHash, "Oracle: weights mismatch");
         require(sub.publicInputs[0] == uint256(sub.modelWeightsHash), "Oracle: pub input 0");
 
-        // Bind the cleartext outputs to the proof.
         require(keccak256(abi.encodePacked(sub.outputs)) == sub.outputsHash, "Oracle: outputs mismatch");
         require(sub.publicInputs[1] == uint256(sub.outputsHash), "Oracle: pub input 1");
 
-        // Verify all price bars belong to the signed feed.
         require(sub.priceFeedBars.length    == sub.outputs.length, "Oracle: bars/outputs len");
         require(sub.priceFeedIndexes.length == sub.outputs.length, "Oracle: indexes len");
         for (uint256 i = 0; i < sub.priceFeedBars.length; i++) {
@@ -135,14 +196,9 @@ contract PerformanceOracle {
             require(MerkleProofPacked.verify(siblings, root, leaf), "Oracle: bad price proof");
         }
 
-        // Verify the SNARK.
         require(verifier.verifyProof(sub.snarkProof, sub.publicInputs), "Oracle: bad proof");
 
-        // Recompute Sharpe deterministically.
-        (uint256 sharpeBps, uint256 nTrades) = _sharpe(sub.outputs, sub.priceFeedBars);
-
-        IModelNFTOracleHook(modelNFT).setPerformanceScore(sub.tokenId, sharpeBps);
-        emit AuditAccepted(sub.tokenId, sub.epoch, sharpeBps, nTrades);
+        return _sharpe(sub.outputs, sub.priceFeedBars);
     }
 
     /// @dev Per-bar return = (bars[i+1] - bars[i]) / bars[i] scaled by 1e8,
