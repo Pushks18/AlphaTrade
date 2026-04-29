@@ -121,7 +121,8 @@ contract Interact is Script {
             jobId,
             "ipfs://QmModelWeightsExample",
             "ipfs://QmZkProofExample",
-            "Trend-following predictor v1"
+            "Trend-following predictor v1",
+            keccak256("interact-script-weights-v1")
         );
         vm.stopBroadcast();
 

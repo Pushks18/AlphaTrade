@@ -33,10 +33,15 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
     // ---------------------------------------------------------------------
 
     struct ModelMetadata {
-        string  modelCID;     // 0G Storage CID for the trained weights
-        string  proofCID;     // 0G Storage CID for the zkML proof bundle
-        string  description;  // human-readable description / model card
-        uint256 createdAt;    // block.timestamp at mint
+        string  modelCID;          // 0G Storage CID for trained weights
+        string  proofCID;          // 0G Storage CID for the EZKL proof bundle
+        string  description;       // human-readable model card
+        uint256 createdAt;         // block.timestamp at mint
+        uint256 creatorStake;      // wei locked at mint, slashable by oracle
+        uint256 sharpeBps;         // 100 * Sharpe ratio in bps; 0 until first audit
+        uint256 nVerifiedTrades;   // trades covered by latest zk audit
+        uint64  lastAuditAt;       // block.timestamp of most recent score update
+        bytes32 modelWeightsHash;  // keccak256 of the ONNX weights file
     }
 
     // ---------------------------------------------------------------------
@@ -126,26 +131,29 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
         uint256 jobId,
         string memory modelCID,
         string memory proofCID,
-        string memory description
-    ) external nonReentrant returns (uint256 tokenId) {
+        string memory description,
+        bytes32 modelWeightsHash
+    ) external payable nonReentrant returns (uint256 tokenId) {
         require(bytes(modelCID).length > 0, "Model: empty modelCID");
         require(bytes(proofCID).length > 0, "Model: empty proofCID");
+        require(modelWeightsHash != bytes32(0), "Model: empty weightsHash");
 
-        // Pull mint right atomically. Reverts on bad job / duplicate.
         address owner_ = gpuMarketplace.consumeMintRight(jobId);
         require(owner_ != address(0), "Model: no owner");
-
-        // Belt-and-braces: catches any mismatch with the marketplace's own
-        // duplicate guard. consumeMintRight should already prevent this.
         require(tokenIdForJob[jobId] == 0, "Model: job already minted");
 
         tokenId = nextTokenId++;
 
         models[tokenId] = ModelMetadata({
-            modelCID: modelCID,
-            proofCID: proofCID,
-            description: description,
-            createdAt: block.timestamp
+            modelCID:         modelCID,
+            proofCID:         proofCID,
+            description:      description,
+            createdAt:        block.timestamp,
+            creatorStake:     msg.value,
+            sharpeBps:        0,
+            nVerifiedTrades:  0,
+            lastAuditAt:      0,
+            modelWeightsHash: modelWeightsHash
         });
         creator[tokenId] = owner_;
         jobIdOfToken[tokenId] = jobId;
@@ -180,6 +188,16 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
     // Metadata (ERC-7857-compatible JSON, encoded inline)
     // ---------------------------------------------------------------------
 
+    function _bytes32ToHex(bytes32 b) private pure returns (string memory) {
+        bytes memory chars = "0123456789abcdef";
+        bytes memory s = new bytes(64);
+        for (uint256 i = 0; i < 32; i++) {
+            s[2*i]   = chars[uint8(b[i] >> 4)];
+            s[2*i+1] = chars[uint8(b[i] & 0x0f)];
+        }
+        return string(s);
+    }
+
     /// @notice Returns a base64-encoded data URI containing the model card.
     /// @dev    Embeds modelCID + proofCID + creator + jobId inline so wallets
     ///         can render the token without any off-chain service.
@@ -192,16 +210,23 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
             '","description":"', m.description,
             '","modelCID":"', m.modelCID,
             '","proofCID":"', m.proofCID,
+            '","modelWeightsHash":"0x', _bytes32ToHex(m.modelWeightsHash),
             '"'
         );
-        bytes memory tail = abi.encodePacked(
+        bytes memory mid = abi.encodePacked(
             ',"creator":"', creator[tokenId].toHexString(),
             '","jobId":', jobIdOfToken[tokenId].toString(),
             ',"performanceScore":', performanceScore[tokenId].toString(),
+            ',"sharpeBps":', m.sharpeBps.toString(),
+            ',"nVerifiedTrades":', m.nVerifiedTrades.toString()
+        );
+        bytes memory tail = abi.encodePacked(
+            ',"creatorStake":', m.creatorStake.toString(),
+            ',"lastAuditAt":', uint256(m.lastAuditAt).toString(),
             ',"createdAt":', m.createdAt.toString(),
             '}'
         );
-        bytes memory json = abi.encodePacked(head, tail);
+        bytes memory json = abi.encodePacked(head, mid, tail);
 
         return string(
             abi.encodePacked("data:application/json;base64,", Base64.encode(json))

@@ -16,9 +16,10 @@ contract ModelNFTTest is Test {
 
     uint256 internal constant PRICE = 0.01 ether;
 
-    string internal constant MODEL_CID = "bafymodel";
-    string internal constant PROOF_CID = "bafyproof";
-    string internal constant DESC      = "Trend-following predictor";
+    string  internal constant MODEL_CID    = "bafymodel";
+    string  internal constant PROOF_CID    = "bafyproof";
+    string  internal constant DESC         = "Trend-following predictor";
+    bytes32 internal constant DUMMY_HASH   = bytes32(uint256(1));
 
     event ModelMinted(
         uint256 indexed tokenId,
@@ -56,6 +57,18 @@ contract ModelNFTTest is Test {
         market.completeJob(jobId);
     }
 
+    function _mintForRenter(address /*who*/) internal returns (uint256) {
+        uint256 jobId = _rentAndComplete();
+        return nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
+    }
+
+    function _mintForRenterWithStake(address who, uint256 stake) internal returns (uint256) {
+        uint256 jobId = _rentAndComplete();
+        vm.deal(who, who.balance + stake);
+        vm.prank(who);
+        return nft.mintModel{value: stake}(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
+    }
+
     // construction ----------------------------------------------------
 
     function test_deploys_withCorrectMetadata() public view {
@@ -81,7 +94,7 @@ contract ModelNFTTest is Test {
 
         // Permissionless: anyone can submit the CIDs.
         vm.prank(stranger);
-        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
 
         assertEq(tokenId, 1);
         assertEq(nft.ownerOf(tokenId), renter);
@@ -90,8 +103,13 @@ contract ModelNFTTest is Test {
         assertEq(nft.tokenIdForJob(jobId), tokenId);
         assertTrue(market.modelMinted(jobId));
 
-        (string memory mCID, string memory pCID, string memory desc, uint256 createdAt) =
-            nft.models(tokenId);
+        (
+            string memory mCID,
+            string memory pCID,
+            string memory desc,
+            uint256 createdAt,
+            , , , ,
+        ) = nft.models(tokenId);
         assertEq(mCID, MODEL_CID);
         assertEq(pCID, PROOF_CID);
         assertEq(desc, DESC);
@@ -106,32 +124,32 @@ contract ModelNFTTest is Test {
         uint256 jobId = market.rentGPU{value: PRICE}(gpuId, 1);
 
         vm.expectRevert(bytes("Job: not completed"));
-        nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+        nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
     }
 
     function test_mintModel_revertsOnDuplicate() public {
         uint256 jobId = _rentAndComplete();
-        nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+        nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
 
         vm.expectRevert(bytes("Job: model already minted"));
-        nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+        nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
     }
 
     function test_mintModel_revertsOnEmptyCIDs() public {
         uint256 jobId = _rentAndComplete();
 
         vm.expectRevert(bytes("Model: empty modelCID"));
-        nft.mintModel(jobId, "", PROOF_CID, DESC);
+        nft.mintModel(jobId, "", PROOF_CID, DESC, DUMMY_HASH);
 
         vm.expectRevert(bytes("Model: empty proofCID"));
-        nft.mintModel(jobId, MODEL_CID, "", DESC);
+        nft.mintModel(jobId, MODEL_CID, "", DESC, DUMMY_HASH);
     }
 
     // setPerformanceScore --------------------------------------------
 
     function test_setPerformanceScore_updatesAndEmits() public {
         uint256 jobId = _rentAndComplete();
-        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
 
         vm.expectEmit(true, false, false, true);
         emit PerformanceUpdated(tokenId, 4242);
@@ -144,7 +162,7 @@ contract ModelNFTTest is Test {
 
     function test_setPerformanceScore_revertsForNonOwner() public {
         uint256 jobId = _rentAndComplete();
-        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
 
         vm.prank(stranger);
         vm.expectRevert();
@@ -161,7 +179,7 @@ contract ModelNFTTest is Test {
 
     function test_tokenURI_isInlineBase64Json() public {
         uint256 jobId = _rentAndComplete();
-        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
 
         string memory uri = nft.tokenURI(tokenId);
         // Prefix sanity check; full base64 decoding is out of scope for foundry.
@@ -207,7 +225,7 @@ contract ModelNFTTest is Test {
         nft.setOracle(mockOracle);
 
         uint256 jobId = _rentAndComplete();
-        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
 
         // Owner is no longer authorized once oracle is set.
         vm.prank(owner);
@@ -221,7 +239,7 @@ contract ModelNFTTest is Test {
         nft.setOracle(mockOracle);
 
         uint256 jobId = _rentAndComplete();
-        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
 
         vm.prank(mockOracle);
         nft.setPerformanceScore(tokenId, 1234);
@@ -231,10 +249,45 @@ contract ModelNFTTest is Test {
     function test_setPerformanceScore_ownerCanWriteWhenOracleUnset() public {
         // Backwards-compat: until oracle is configured, owner can still write.
         uint256 jobId = _rentAndComplete();
-        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, DUMMY_HASH);
 
         vm.prank(owner);
         nft.setPerformanceScore(tokenId, 999);
         assertEq(nft.performanceScore(tokenId), 999);
+    }
+
+    // mintModel — extended metadata ----------------------------------
+
+    function test_mintModel_initializesAuditFieldsToZero() public {
+        uint256 tokenId = _mintForRenter(renter);
+        (
+            , , , ,
+            uint256 creatorStake,
+            uint256 sharpeBps,
+            uint256 nVerifiedTrades,
+            uint64  lastAuditAt,
+            bytes32 modelWeightsHash
+        ) = nft.models(tokenId);
+
+        assertEq(creatorStake, 0);
+        assertEq(sharpeBps, 0);
+        assertEq(nVerifiedTrades, 0);
+        assertEq(uint256(lastAuditAt), 0);
+        assertEq(modelWeightsHash, DUMMY_HASH);
+    }
+
+    function test_mintModel_storesCreatorStakeFromMsgValue() public {
+        uint256 stake = 0.05 ether;
+        uint256 tokenId = _mintForRenterWithStake(renter, stake);
+
+        (, , , , uint256 creatorStake, , , , ) = nft.models(tokenId);
+        assertEq(creatorStake, stake);
+        assertEq(address(nft).balance, stake);
+    }
+
+    function test_mintModel_revertsOnZeroWeightsHash() public {
+        uint256 jobId = _rentAndComplete();
+        vm.expectRevert(bytes("Model: empty weightsHash"));
+        nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, bytes32(0));
     }
 }

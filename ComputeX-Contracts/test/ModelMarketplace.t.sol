@@ -55,7 +55,7 @@ contract ModelMarketplaceTest is Test {
         uint256 jobId = gpu.rentGPU{value: GPU_PRICE}(gpuId, 1);
         vm.prank(provider);
         gpu.completeJob(jobId);
-        tokenId = nft.mintModel(jobId, "bafy-model", "bafy-proof", "desc");
+        tokenId = nft.mintModel(jobId, "bafy-model", "bafy-proof", "desc", bytes32(uint256(1)));
         require(nft.ownerOf(tokenId) == to, "setup: bad mint owner");
     }
 
