@@ -160,10 +160,18 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
     // Performance / reputation
     // ---------------------------------------------------------------------
 
-    /// @notice Owner-set performance score used for ranking on the marketplace
-    ///         and for reputation aggregation across a creator's models.
-    function setPerformanceScore(uint256 tokenId, uint256 score) external onlyOwner {
+    /// @notice Performance score writer.
+    /// @dev    If `oracle` is configured (non-zero), only the oracle may write.
+    ///         If unset, the contract owner is the fallback writer (used during
+    ///         deployment and tests). The PerformanceOracle is the production
+    ///         source of truth — it accepts audits guarded by EZKL proofs.
+    function setPerformanceScore(uint256 tokenId, uint256 score) external {
         require(_ownerOf(tokenId) != address(0), "Model: nonexistent token");
+        if (oracle != address(0)) {
+            require(msg.sender == oracle, "Model: not oracle");
+        } else {
+            require(msg.sender == owner(), "Model: not owner");
+        }
         performanceScore[tokenId] = score;
         emit PerformanceUpdated(tokenId, score);
     }

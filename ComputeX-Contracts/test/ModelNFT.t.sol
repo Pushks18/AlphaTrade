@@ -198,4 +198,43 @@ contract ModelNFTTest is Test {
         vm.prank(owner);
         nft.setOracle(newOracle);
     }
+
+    // setPerformanceScore — oracle gating ----------------------------
+
+    function test_setPerformanceScore_revertsIfNotOracle() public {
+        address mockOracle = address(0xCAFE);
+        vm.prank(owner);
+        nft.setOracle(mockOracle);
+
+        uint256 jobId = _rentAndComplete();
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+
+        // Owner is no longer authorized once oracle is set.
+        vm.prank(owner);
+        vm.expectRevert(bytes("Model: not oracle"));
+        nft.setPerformanceScore(tokenId, 1234);
+    }
+
+    function test_setPerformanceScore_succeedsWhenCalledByOracle() public {
+        address mockOracle = address(0xCAFE);
+        vm.prank(owner);
+        nft.setOracle(mockOracle);
+
+        uint256 jobId = _rentAndComplete();
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+
+        vm.prank(mockOracle);
+        nft.setPerformanceScore(tokenId, 1234);
+        assertEq(nft.performanceScore(tokenId), 1234);
+    }
+
+    function test_setPerformanceScore_ownerCanWriteWhenOracleUnset() public {
+        // Backwards-compat: until oracle is configured, owner can still write.
+        uint256 jobId = _rentAndComplete();
+        uint256 tokenId = nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC);
+
+        vm.prank(owner);
+        nft.setPerformanceScore(tokenId, 999);
+        assertEq(nft.performanceScore(tokenId), 999);
+    }
 }
