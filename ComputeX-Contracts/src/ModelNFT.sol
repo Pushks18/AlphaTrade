@@ -12,6 +12,12 @@ interface IGPUMarketplace {
     function consumeMintRight(uint256 jobId) external returns (address owner);
 }
 
+interface ICreatorRegistry {
+    function recordMint(address creator, uint256 modelTokenId) external;
+    function recordScore(address creator, uint256 sharpeBps) external;
+    function recordSlash(address creator) external;
+}
+
 /// @title  ModelNFT
 /// @notice This NFT represents a verifiable AI model trained via decentralized
 ///         compute. Each token is bound to a specific compute job on the
@@ -77,6 +83,10 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
     /// @dev    Settable by owner; allows post-deployment wiring.
     address public oracle;
 
+    /// @notice The CreatorRegistry that mirrors per-creator lifetime stats.
+    /// @dev    Optional; if zero, no SBT bookkeeping happens.
+    address public creatorRegistry;
+
     // ---------------------------------------------------------------------
     // Events
     // ---------------------------------------------------------------------
@@ -92,6 +102,8 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
     event PerformanceUpdated(uint256 indexed tokenId, uint256 score);
 
     event OracleSet(address indexed previousOracle, address indexed newOracle);
+
+    event CreatorRegistrySet(address indexed previous, address indexed next);
 
     // ---------------------------------------------------------------------
     // Constructor
@@ -109,6 +121,13 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
     function setOracle(address newOracle) external onlyOwner {
         emit OracleSet(oracle, newOracle);
         oracle = newOracle;
+    }
+
+    /// @notice Set or rotate the CreatorRegistry. Optional; pass address(0)
+    ///         to disable SBT bookkeeping.
+    function setCreatorRegistry(address r) external onlyOwner {
+        emit CreatorRegistrySet(creatorRegistry, r);
+        creatorRegistry = r;
     }
 
     // ---------------------------------------------------------------------
@@ -161,6 +180,10 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
 
         _safeMint(owner_, tokenId);
 
+        if (creatorRegistry != address(0)) {
+            ICreatorRegistry(creatorRegistry).recordMint(owner_, tokenId);
+        }
+
         emit ModelMinted(tokenId, jobId, owner_, modelCID, proofCID);
     }
 
@@ -187,6 +210,9 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
         require(stake > 0, "Model: no stake");
 
         models[tokenId].creatorStake = 0; // checks-effects-interactions
+        if (creatorRegistry != address(0)) {
+            ICreatorRegistry(creatorRegistry).recordSlash(creator[tokenId]);
+        }
         paid = (stake * slasherBps) / 10_000;
         uint256 burned = stake - paid;
 
@@ -212,6 +238,9 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
             require(msg.sender == owner(), "Model: not owner");
         }
         performanceScore[tokenId] = score;
+        if (creatorRegistry != address(0)) {
+            ICreatorRegistry(creatorRegistry).recordScore(creator[tokenId], score);
+        }
         emit PerformanceUpdated(tokenId, score);
     }
 

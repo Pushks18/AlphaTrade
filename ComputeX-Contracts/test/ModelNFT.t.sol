@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {GPUMarketplace} from "../src/GPUMarketplace.sol";
 import {ModelNFT} from "../src/ModelNFT.sol";
+import {CreatorRegistry} from "../src/CreatorRegistry.sol";
 
 contract ModelNFTTest is Test {
     GPUMarketplace internal market;
@@ -353,5 +354,61 @@ contract ModelNFTTest is Test {
         vm.prank(mockOracle);
         vm.expectRevert(bytes("Model: bad bps"));
         nft.slashStake(tokenId, payable(address(0xBEEF)), 10_001);
+    }
+
+    // CreatorRegistry hooks ------------------------------------------
+
+    function _setupCreatorRegistry() internal returns (CreatorRegistry reg) {
+        reg = new CreatorRegistry(owner, address(nft));
+        vm.prank(owner);
+        nft.setCreatorRegistry(address(reg));
+    }
+
+    function test_setCreatorRegistry_revertsForNonOwner() public {
+        vm.prank(stranger);
+        vm.expectRevert();
+        nft.setCreatorRegistry(address(0xBEEF));
+    }
+
+    function test_mint_callsCreatorRegistryRecordMint() public {
+        CreatorRegistry reg = _setupCreatorRegistry();
+        uint256 tokenId = _mintForRenter(renter);
+        assertEq(reg.balanceOf(renter), 1);
+        (, uint256 modelsMinted, , , ) = reg.records(reg.creatorTokenId(renter));
+        assertEq(modelsMinted, 1);
+        // Sanity: tokenId came back valid.
+        assertGt(tokenId, 0);
+    }
+
+    function test_setPerformanceScore_callsCreatorRegistryRecordScore() public {
+        CreatorRegistry reg = _setupCreatorRegistry();
+        uint256 tokenId = _mintForRenter(renter);
+
+        // Owner is the score writer (oracle unset).
+        vm.prank(owner);
+        nft.setPerformanceScore(tokenId, 4665);
+
+        (, , uint256 totalSharpe, , ) = reg.records(reg.creatorTokenId(renter));
+        assertEq(totalSharpe, 4665);
+    }
+
+    function test_slashStake_callsCreatorRegistryRecordSlash() public {
+        CreatorRegistry reg = _setupCreatorRegistry();
+        address mockOracle = address(0xCAFE);
+        vm.prank(owner);
+        nft.setOracle(mockOracle);
+        uint256 tokenId = _mintForRenterWithStake(renter, 1 ether);
+
+        vm.prank(mockOracle);
+        nft.slashStake(tokenId, payable(address(0xBEEF)), 8000);
+
+        (, , , uint256 slashes, ) = reg.records(reg.creatorTokenId(renter));
+        assertEq(slashes, 1);
+    }
+
+    function test_mint_skipsRegistryWhenUnset() public {
+        // creatorRegistry defaults to address(0); mint should still succeed.
+        uint256 tokenId = _mintForRenter(renter);
+        assertEq(nft.ownerOf(tokenId), renter);
     }
 }

@@ -6,6 +6,7 @@ import {GPUMarketplace}    from "../src/GPUMarketplace.sol";
 import {ModelNFT}          from "../src/ModelNFT.sol";
 import {ModelMarketplace}  from "../src/ModelMarketplace.sol";
 import {PerformanceOracle} from "../src/PerformanceOracle.sol";
+import {CreatorRegistry}   from "../src/CreatorRegistry.sol";
 import {Halo2Verifier}     from "../src/verifiers/EzklVerifier.sol";
 
 /// @title  Deploy
@@ -31,10 +32,11 @@ contract Deploy is Script {
         GPUMarketplace   gpuMarket   = new GPUMarketplace(deployer);
         ModelNFT         modelNFT    = new ModelNFT(deployer, address(gpuMarket));
         ModelMarketplace modelMarket = new ModelMarketplace(deployer, address(modelNFT));
-        Halo2Verifier    verifier    = new Halo2Verifier();
-        PerformanceOracle oracle     = new PerformanceOracle(
+        Halo2Verifier      verifier    = new Halo2Verifier();
+        PerformanceOracle  oracle      = new PerformanceOracle(
             deployer, feedSigner, address(modelNFT), address(verifier)
         );
+        CreatorRegistry    creatorReg  = new CreatorRegistry(deployer, address(modelNFT));
 
         // Wire the atomic mint-right pull: only this ModelNFT can call
         // gpuMarket.consumeMintRight(jobId).
@@ -44,6 +46,9 @@ contract Deploy is Script {
         // owner is no longer the score writer.
         modelNFT.setOracle(address(oracle));
 
+        // Hook the SBT registry so creators accumulate lifetime stats.
+        modelNFT.setCreatorRegistry(address(creatorReg));
+
         vm.stopBroadcast();
 
         console2.log("GPUMarketplace:    ", address(gpuMarket));
@@ -51,6 +56,7 @@ contract Deploy is Script {
         console2.log("ModelMarketplace:  ", address(modelMarket));
         console2.log("EzklVerifier:      ", address(verifier));
         console2.log("PerformanceOracle: ", address(oracle));
+        console2.log("CreatorRegistry:   ", address(creatorReg));
         console2.log("feedSigner:        ", feedSigner);
     }
 }
