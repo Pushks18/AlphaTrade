@@ -28,6 +28,7 @@ contract ModelNFTTest is Test {
         string proofCID
     );
     event PerformanceUpdated(uint256 indexed tokenId, uint256 score);
+    event OracleSet(address indexed previousOracle, address indexed newOracle);
 
     function setUp() public {
         // Deploy stack as owner
@@ -173,5 +174,28 @@ contract ModelNFTTest is Test {
     function test_tokenURI_revertsForUnknownToken() public {
         vm.expectRevert(bytes("Model: nonexistent token"));
         nft.tokenURI(123);
+    }
+
+    // oracle pointer --------------------------------------------------
+
+    function test_setOracle_revertsForNonOwner() public {
+        vm.prank(stranger);
+        vm.expectRevert();
+        nft.setOracle(address(0x1234));
+    }
+
+    function test_setOracle_setsAddress() public {
+        address newOracle = address(0xCAFE);
+        vm.prank(owner);
+        nft.setOracle(newOracle);
+        assertEq(nft.oracle(), newOracle);
+    }
+
+    function test_setOracle_emitsEvent() public {
+        address newOracle = address(0xBEEF);
+        vm.expectEmit(true, true, false, false);
+        emit OracleSet(address(0), newOracle);
+        vm.prank(owner);
+        nft.setOracle(newOracle);
     }
 }

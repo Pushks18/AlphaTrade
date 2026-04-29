@@ -68,6 +68,10 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
     /// @notice jobId => tokenId minted for that job (0 means none).
     mapping(uint256 => uint256) public tokenIdForJob;
 
+    /// @notice The PerformanceOracle authorized to write performance scores.
+    /// @dev    Settable by owner; allows post-deployment wiring.
+    address public oracle;
+
     // ---------------------------------------------------------------------
     // Events
     // ---------------------------------------------------------------------
@@ -82,6 +86,8 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
 
     event PerformanceUpdated(uint256 indexed tokenId, uint256 score);
 
+    event OracleSet(address indexed previousOracle, address indexed newOracle);
+
     // ---------------------------------------------------------------------
     // Constructor
     // ---------------------------------------------------------------------
@@ -92,6 +98,12 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
     {
         require(gpuMarketplaceAddress != address(0), "Model: zero marketplace");
         gpuMarketplace = IGPUMarketplace(gpuMarketplaceAddress);
+    }
+
+    /// @notice Set or rotate the PerformanceOracle.
+    function setOracle(address newOracle) external onlyOwner {
+        emit OracleSet(oracle, newOracle);
+        oracle = newOracle;
     }
 
     // ---------------------------------------------------------------------
