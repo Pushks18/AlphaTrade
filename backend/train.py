@@ -1,130 +1,94 @@
 #!/usr/bin/env python3
 """
-train.py — ComputeX AI training script (Person B).
+train.py — AlphaTrade AI training script.
 
-Trains a simple linear-regression "trend-following" model on synthetic
-ETH/USD price data. In production, replace the data source with a real
-price feed (e.g. Chainlink, Binance API) and swap the model for an RL agent.
+Trains the AlphaMLP basket-rotation policy on a deterministic synthetic
+price feed and exports the resulting model to ONNX. The hash of the ONNX
+file is committed to ModelNFT at mint time so the on-chain audit can
+bind the SNARK proof to a specific model identity.
 
-Usage:
-    python3 train.py --job-id 0 --output /tmp/weights_0.json
+Outputs (under --output dir):
+    model.onnx          — static-shape ONNX (1, 120) -> (1, 5) used by EZKL
+    model_dynamic.onnx  — dynamic batch axis, used at serving time
+    meta.json           — { jobId, weightsHash, feedSeed, trainedEpochs, trainedAt, nBars }
+
+Invoked by the orchestrator once a GPU-rental job is created.
 """
-
+from __future__ import annotations
 import argparse
 import json
-import math
-import os
-import random
+import sys
 import time
+from pathlib import Path
 
-# ── Args ─────────────────────────────────────────────────────────────────────
-parser = argparse.ArgumentParser(description="ComputeX model trainer")
-parser.add_argument("--job-id",  required=True,  help="GPUMarketplace job ID")
-parser.add_argument("--output",  required=True,  help="Path to write weights.json")
-parser.add_argument("--epochs",  type=int, default=200, help="Training epochs")
-parser.add_argument("--lr",      type=float, default=0.01, help="Learning rate")
-args = parser.parse_args()
+import torch
 
-random.seed(int(args.job_id) + 42)
+# Make sibling zkml package importable when run as a script from backend/
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-print(f"[train.py] Job #{args.job_id} — starting training")
-print(f"  epochs={args.epochs}  lr={args.lr}")
+from zkml.model import AlphaMLP, export_to_onnx, weights_hash, NUM_TOKENS
+from zkml.oracle_feed import build_feed, PRICE_DECIMALS
 
-# ── Synthetic price data ──────────────────────────────────────────────────────
-def generate_prices(n: int = 200) -> list[float]:
-    """Generate a random walk price series with trend and noise."""
-    price = 2000.0
-    prices = []
-    for _ in range(n):
-        drift  = random.gauss(0.0002, 0.001)      # slight upward drift
-        noise  = random.gauss(0, 0.005)
-        price *= math.exp(drift + noise)
-        prices.append(round(price, 4))
-    return prices
+import numpy as np
 
-def make_features(prices: list[float], window: int = 5) -> list[tuple[list[float], float]]:
-    """Sliding-window features: [returns over window] → next return."""
-    returns = [math.log(prices[i+1] / prices[i]) for i in range(len(prices)-1)]
-    samples = []
-    for i in range(window, len(returns)):
-        X = returns[i-window:i]       # past 5 log-returns
-        y = 1.0 if returns[i] > 0 else -1.0   # direction label
-        samples.append((X, y))
-    return samples
 
-prices  = generate_prices(500)
-samples = make_features(prices, window=5)
-WINDOW  = 5
+def _make_features(feed: np.ndarray, lookback: int = 24) -> torch.Tensor:
+    """Build (T-lookback, lookback*NUM_TOKENS) feature matrix."""
+    rows = []
+    for bar in range(lookback, feed.shape[0]):
+        rows.append(feed[bar - lookback : bar].astype("float32").flatten() / 10**PRICE_DECIMALS)
+    return torch.tensor(np.stack(rows), dtype=torch.float32)
 
-# ── Model: linear (logistic-style) with stochastic gradient descent ───────────
-weights = [random.gauss(0, 0.01) for _ in range(WINDOW)]
-bias    = 0.0
 
-def predict(x: list[float]) -> float:
-    """Linear prediction."""
-    return sum(w * xi for w, xi in zip(weights, x)) + bias
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--job-id", required=True, type=int)
+    ap.add_argument("--output", required=True, type=str, help="output directory")
+    ap.add_argument("--epochs", type=int, default=20)
+    ap.add_argument("--seed",   type=int, default=42)
+    ap.add_argument("--n-bars", type=int, default=512)
+    args = ap.parse_args()
 
-def sigmoid(z: float) -> float:
-    return 1.0 / (1.0 + math.exp(-max(-500, min(500, z))))
+    out = Path(args.output)
+    out.mkdir(parents=True, exist_ok=True)
 
-def loss_grad(x: list[float], y: float) -> tuple[list[float], float]:
-    """Binary cross-entropy gradient."""
-    z    = predict(x)
-    p    = sigmoid(z)
-    t    = (y + 1) / 2          # map {-1,1} → {0,1}
-    err  = p - t
-    dw   = [err * xi for xi in x]
-    db   = err
-    return dw, db
+    torch.manual_seed(args.seed)
+    model = AlphaMLP()
+    feed = build_feed(seed=args.seed, n_bars=args.n_bars, n_tokens=NUM_TOKENS)
 
-print(f"  Generating {len(samples)} training samples from synthetic price data")
+    feed_t = torch.tensor(feed, dtype=torch.float32)
+    prices = feed_t[24:]                                # (T, NUM_TOKENS)
+    next_ret = (prices[1:] - prices[:-1]) / prices[:-1] # (T-1, NUM_TOKENS)
 
-losses = []
-t0 = time.time()
-for epoch in range(args.epochs):
-    random.shuffle(samples)
-    total_loss = 0.0
-    for x, y in samples:
-        dw, db = loss_grad(x, y)
-        for i in range(WINDOW):
-            weights[i] -= args.lr * dw[i]
-        bias -= args.lr * db
-        z  = predict(x)
-        p  = sigmoid(z)
-        t_ = (y + 1) / 2
-        total_loss += -(t_ * math.log(p + 1e-9) + (1-t_) * math.log(1-p + 1e-9))
-    avg_loss = total_loss / len(samples)
-    losses.append(avg_loss)
-    if epoch % 40 == 0:
-        print(f"  epoch {epoch:4d}/{args.epochs}  loss={avg_loss:.4f}")
+    X = _make_features(feed, lookback=24)               # (T, 120)
 
-elapsed = time.time() - t0
+    opt = torch.optim.Adam(model.parameters(), lr=1e-3)
+    model.train()
+    for ep in range(args.epochs):
+        Y = model(X)                                    # (T, 5), softmax
+        wY = Y[:-1]                                     # align with next_ret
+        loss = -(wY * next_ret).sum(dim=-1).mean()
+        opt.zero_grad(); loss.backward(); opt.step()
+        if ep == 0 or (ep + 1) == args.epochs:
+            print(f"  epoch {ep+1:>3}/{args.epochs}  loss={float(loss):+.6f}", file=sys.stderr)
 
-# ── Evaluate ──────────────────────────────────────────────────────────────────
-correct = sum(1 for x, y in samples if (predict(x) > 0) == (y > 0))
-accuracy = correct / len(samples) * 100
+    static_onnx  = out / "model.onnx"
+    dynamic_onnx = out / "model_dynamic.onnx"
+    export_to_onnx(model, static_onnx,  static=True)
+    export_to_onnx(model, dynamic_onnx, static=False)
 
-print(f"\n  ✅ Training done in {elapsed:.2f}s")
-print(f"     Final loss: {losses[-1]:.4f}")
-print(f"     Accuracy:   {accuracy:.1f}%")
+    meta = {
+        "jobId":         args.job_id,
+        "weightsHash":   weights_hash(static_onnx),
+        "feedSeed":      args.seed,
+        "trainedEpochs": args.epochs,
+        "trainedAt":     int(time.time()),
+        "nBars":         args.n_bars,
+    }
+    (out / "meta.json").write_text(json.dumps(meta, indent=2))
+    print(f"wrote {static_onnx} and meta.json")
+    return 0
 
-# ── Save weights ──────────────────────────────────────────────────────────────
-output = {
-    "job_id":    args.job_id,
-    "model":     "LinearTrendFollower-v1",
-    "weights":   weights,
-    "bias":      bias,
-    "window":    WINDOW,
-    "accuracy":  round(accuracy, 2),
-    "loss":      round(losses[-1], 6),
-    "epochs":    args.epochs,
-    "lr":        args.lr,
-    "n_samples": len(samples),
-    "trained_at": time.time(),
-}
 
-os.makedirs(os.path.dirname(args.output), exist_ok=True)
-with open(args.output, "w") as f:
-    json.dump(output, f, indent=2)
-
-print(f"  Weights saved → {args.output}")
+if __name__ == "__main__":
+    sys.exit(main())

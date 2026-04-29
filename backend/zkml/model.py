@@ -31,20 +31,26 @@ class AlphaMLP(nn.Module):
         return torch.softmax(logits, dim=-1)
 
 
-def export_to_onnx(model: nn.Module, out_path: Path) -> Path:
+def export_to_onnx(model: nn.Module, out_path: Path, static: bool = False) -> Path:
+    """Export the model to ONNX.
+
+    static=False (default): dynamic batch axis. Used for inference at
+    serving time when batch size varies.
+    static=True: fixed batch=1. EZKL's circuit compiler requires fully
+    determined shapes, so this is what gets fed into the ZK pipeline.
+    """
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     model.eval()
     dummy = torch.zeros(1, NUM_FEATURES)
-    torch.onnx.export(
-        model,
-        dummy,
-        str(out_path),
+    kwargs = dict(
         input_names=["features"],
         output_names=["weights"],
         opset_version=13,
-        dynamic_axes={"features": {0: "batch"}, "weights": {0: "batch"}},
     )
+    if not static:
+        kwargs["dynamic_axes"] = {"features": {0: "batch"}, "weights": {0: "batch"}}
+    torch.onnx.export(model, dummy, str(out_path), **kwargs)
     return out_path
 
 
