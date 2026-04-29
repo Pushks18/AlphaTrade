@@ -290,4 +290,68 @@ contract ModelNFTTest is Test {
         vm.expectRevert(bytes("Model: empty weightsHash"));
         nft.mintModel(jobId, MODEL_CID, PROOF_CID, DESC, bytes32(0));
     }
+
+    // slashStake -----------------------------------------------------
+
+    address constant BURN = address(0x000000000000000000000000000000000000dEaD);
+
+    event StakeSlashed(uint256 indexed tokenId, address indexed slasher, uint256 paid, uint256 burned);
+
+    function test_slashStake_revertsForNonOracle() public {
+        uint256 tokenId = _mintForRenterWithStake(renter, 0.05 ether);
+        address mockOracle = address(0xCAFE);
+        vm.prank(owner);
+        nft.setOracle(mockOracle);
+
+        vm.expectRevert(bytes("Model: not oracle"));
+        nft.slashStake(tokenId, payable(address(this)), 8000);
+    }
+
+    function test_slashStake_paysSlasherAndBurnsRemainder() public {
+        address mockOracle = address(0xCAFE);
+        vm.prank(owner);
+        nft.setOracle(mockOracle);
+
+        uint256 stake = 1 ether;
+        uint256 tokenId = _mintForRenterWithStake(renter, stake);
+
+        address payable slasher = payable(address(0xBEEF));
+        uint256 slasherBefore = slasher.balance;
+        uint256 burnBefore    = BURN.balance;
+
+        vm.prank(mockOracle);
+        uint256 paid = nft.slashStake(tokenId, slasher, 8000);
+
+        assertEq(paid, (stake * 8000) / 10_000);
+        assertEq(slasher.balance, slasherBefore + paid);
+        assertEq(BURN.balance,    burnBefore + (stake - paid));
+
+        (, , , , uint256 creatorStakeAfter, , , , ) = nft.models(tokenId);
+        assertEq(creatorStakeAfter, 0);
+    }
+
+    function test_slashStake_revertsOnDoubleSlash() public {
+        address mockOracle = address(0xCAFE);
+        vm.prank(owner);
+        nft.setOracle(mockOracle);
+        uint256 tokenId = _mintForRenterWithStake(renter, 1 ether);
+
+        vm.prank(mockOracle);
+        nft.slashStake(tokenId, payable(address(0xBEEF)), 8000);
+
+        vm.prank(mockOracle);
+        vm.expectRevert(bytes("Model: no stake"));
+        nft.slashStake(tokenId, payable(address(0xBEEF)), 8000);
+    }
+
+    function test_slashStake_revertsOnBpsAboveCeiling() public {
+        address mockOracle = address(0xCAFE);
+        vm.prank(owner);
+        nft.setOracle(mockOracle);
+        uint256 tokenId = _mintForRenterWithStake(renter, 1 ether);
+
+        vm.prank(mockOracle);
+        vm.expectRevert(bytes("Model: bad bps"));
+        nft.slashStake(tokenId, payable(address(0xBEEF)), 10_001);
+    }
 }

@@ -168,6 +168,37 @@ contract ModelNFT is ERC721, Ownable, ReentrancyGuard {
     // Performance / reputation
     // ---------------------------------------------------------------------
 
+    /// @notice Industry-standard burn address (0x…dEaD). Some chains reject
+    ///         `address(0)` transfers, so we route slash burns here instead.
+    address payable internal constant BURN = payable(0x000000000000000000000000000000000000dEaD);
+
+    event StakeSlashed(uint256 indexed tokenId, address indexed slasher, uint256 paid, uint256 burned);
+
+    /// @notice Oracle-only: slash a model's creator stake. Payment is split
+    ///         `slasherBps` to the slasher; the remainder is sent to BURN
+    ///         which retires it from the active stake pool.
+    function slashStake(uint256 tokenId, address payable slasher, uint16 slasherBps)
+        external returns (uint256 paid)
+    {
+        require(oracle != address(0) && msg.sender == oracle, "Model: not oracle");
+        require(_ownerOf(tokenId) != address(0), "Model: nonexistent token");
+        require(slasherBps <= 10_000, "Model: bad bps");
+        uint256 stake = models[tokenId].creatorStake;
+        require(stake > 0, "Model: no stake");
+
+        models[tokenId].creatorStake = 0; // checks-effects-interactions
+        paid = (stake * slasherBps) / 10_000;
+        uint256 burned = stake - paid;
+
+        (bool okSlasher, ) = slasher.call{value: paid}("");
+        require(okSlasher, "Model: slasher pay failed");
+        if (burned > 0) {
+            (bool okBurn, ) = BURN.call{value: burned}("");
+            require(okBurn, "Model: burn failed");
+        }
+        emit StakeSlashed(tokenId, slasher, paid, burned);
+    }
+
     /// @notice Performance score writer.
     /// @dev    If `oracle` is configured (non-zero), only the oracle may write.
     ///         If unset, the contract owner is the fallback writer (used during
