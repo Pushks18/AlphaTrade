@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {PerformanceOracle} from "../src/PerformanceOracle.sol";
 import {MockVerifier} from "./mocks/MockVerifier.sol";
+import {MockModelNFT} from "./mocks/MockModelNFT.sol";
 
 contract PerformanceOracleSkeletonTest is Test {
     PerformanceOracle oracle;
@@ -66,39 +67,63 @@ contract PerformanceOracleAuditTest is Test {
 
     PerformanceOracle oracle;
     MockVerifier      verifier;
+    MockModelNFT      nft;
 
-    address constant ADMIN     = address(0xA1);
-    address constant SIGNER    = address(0xB2);
-    address constant MODEL_NFT = address(0xC3);
+    address constant ADMIN  = address(0xA1);
+    address constant SIGNER = address(0xB2);
+
+    bytes32 leafA;
+    bytes32 leafB;
+    bytes32 root;
 
     function setUp() public {
         verifier = new MockVerifier();
-        oracle = new PerformanceOracle(ADMIN, SIGNER, MODEL_NFT, address(verifier));
+        nft = new MockModelNFT();
+        nft.setWeightsHash(1, keccak256("weights"));
+        oracle = new PerformanceOracle(ADMIN, SIGNER, address(nft), address(verifier));
+
+        // 2-leaf Merkle tree over flat-market price bars; sufficient for
+        // exercising every check in submitAudit without contriving Sharpe.
+        leafA = keccak256(abi.encodePacked(uint32(0), int256(100e8)));
+        leafB = keccak256(abi.encodePacked(uint32(1), int256(100e8)));
+        root  = leafA < leafB
+            ? keccak256(abi.encodePacked(leafA, leafB))
+            : keccak256(abi.encodePacked(leafB, leafA));
         vm.prank(ADMIN);
-        oracle.publishFeedRoot(1, keccak256("epoch-1"));
+        oracle.publishFeedRoot(1, root);
     }
 
-    function _baseSubmission() internal pure returns (PerformanceOracle.AuditSubmission memory s) {
-        s.tokenId            = 1;
-        s.epoch              = 1;
-        s.modelWeightsHash   = keccak256("weights");
-        s.outputsHash        = keccak256("outputs");
-        s.snarkProof         = hex"";
-        s.publicInputs       = new uint256[](3);
-        s.publicInputs[0]    = uint256(keccak256("weights"));
-        s.publicInputs[1]    = uint256(keccak256("outputs"));
-        s.publicInputs[2]    = uint256(keccak256("epoch-1"));
+    function _validSubmission() internal view returns (PerformanceOracle.AuditSubmission memory s) {
+        s.tokenId          = 1;
+        s.epoch            = 1;
+        s.modelWeightsHash = keccak256("weights");
+        int256[] memory outputs = new int256[](2);
+        outputs[0] = 5000; outputs[1] = 5000;
+        s.outputs     = outputs;
+        s.outputsHash = keccak256(abi.encodePacked(outputs));
+        s.publicInputs    = new uint256[](3);
+        s.publicInputs[0] = uint256(s.modelWeightsHash);
+        s.publicInputs[1] = uint256(s.outputsHash);
+        s.publicInputs[2] = uint256(root);
+        s.priceFeedBars   = new int256[](2);
+        s.priceFeedBars[0] = 100e8; s.priceFeedBars[1] = 100e8;
+        s.priceFeedIndexes = new uint32[](2);
+        s.priceFeedIndexes[0] = 0; s.priceFeedIndexes[1] = 1;
+        s.priceFeedSiblings = new bytes32[](2);
+        s.priceFeedSiblings[0] = leafB;
+        s.priceFeedSiblings[1] = leafA;
+        s.snarkProof = hex"";
     }
 
     function test_submitAudit_revertsOnUnknownEpoch() public {
-        PerformanceOracle.AuditSubmission memory s = _baseSubmission();
+        PerformanceOracle.AuditSubmission memory s = _validSubmission();
         s.epoch = 999;
         vm.expectRevert(bytes("Oracle: unknown epoch"));
         oracle.submitAudit(s);
     }
 
     function test_submitAudit_revertsOnRootMismatch() public {
-        PerformanceOracle.AuditSubmission memory s = _baseSubmission();
+        PerformanceOracle.AuditSubmission memory s = _validSubmission();
         s.publicInputs[2] = uint256(keccak256("WRONG"));
         vm.expectRevert(bytes("Oracle: root mismatch"));
         oracle.submitAudit(s);
@@ -106,15 +131,40 @@ contract PerformanceOracleAuditTest is Test {
 
     function test_submitAudit_revertsOnBadProof() public {
         verifier.setAnswer(false);
-        PerformanceOracle.AuditSubmission memory s = _baseSubmission();
+        PerformanceOracle.AuditSubmission memory s = _validSubmission();
         vm.expectRevert(bytes("Oracle: bad proof"));
         oracle.submitAudit(s);
     }
 
     function test_submitAudit_emitsOnSuccess() public {
-        PerformanceOracle.AuditSubmission memory s = _baseSubmission();
+        PerformanceOracle.AuditSubmission memory s = _validSubmission();
         vm.expectEmit(true, true, false, false);
         emit AuditAccepted(s.tokenId, s.epoch, 0, 0);
         oracle.submitAudit(s);
+    }
+
+    // C3 — outputs / weights / merkle / sharpe -----------------------
+
+    function test_submitAudit_revertsOnWeightsHashMismatch() public {
+        PerformanceOracle.AuditSubmission memory s = _validSubmission();
+        s.modelWeightsHash = keccak256("WRONG");
+        s.publicInputs[0]  = uint256(keccak256("WRONG"));
+        vm.expectRevert(bytes("Oracle: weights mismatch"));
+        oracle.submitAudit(s);
+    }
+
+    function test_submitAudit_revertsOnOutputsHashMismatch() public {
+        PerformanceOracle.AuditSubmission memory s = _validSubmission();
+        s.outputsHash      = keccak256("WRONG");
+        s.publicInputs[1]  = uint256(keccak256("WRONG"));
+        vm.expectRevert(bytes("Oracle: outputs mismatch"));
+        oracle.submitAudit(s);
+    }
+
+    function test_submitAudit_writesScoreOnSuccess() public {
+        // Flat market => sharpe == 0; stronger values covered in D4 parity.
+        PerformanceOracle.AuditSubmission memory s = _validSubmission();
+        oracle.submitAudit(s);
+        assertEq(nft.scores(1), 0);
     }
 }
