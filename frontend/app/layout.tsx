@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ComputeX — Decentralized GPU Compute & AI Model Marketplace",
+  title: "AlphaTrade — Decentralized GPU Compute & AI Model Marketplace",
   description: "Rent GPU compute, train AI models, mint them as iNFTs, and execute autonomous trades — all onchain via 0G Chain.",
 };
 
