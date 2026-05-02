@@ -129,6 +129,31 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
         emit TradeExecuted(blockNumber, navBefore);
     }
 
+    function _deposit(address caller, address receiver, uint256 assets, uint256 shares) internal override {
+        super._deposit(caller, receiver, assets, shares);
+        lastHarvestAssets = totalAssets();
+    }
+
+    function harvest() external {
+        uint256 current = totalAssets();
+        uint256 last    = lastHarvestAssets;
+        uint256 feeShares;
+
+        if (current > last) {
+            uint256 gain      = current - last;
+            uint256 feeAssets = (gain * perfFeeBps) / 10_000;
+            uint256 supply    = totalSupply();
+            if (supply > 0) {
+                feeShares = (feeAssets * supply) / current;
+                address op = IERC721(registry).ownerOf(vaultId);
+                _mint(op, feeShares);
+            }
+        }
+
+        lastHarvestAssets = current;
+        emit Harvested(current, current > last ? current - last : 0, feeShares);
+    }
+
     function _rebalance(uint16[5] calldata weights, uint256 nav) private {
         // Pass 1: sell overweight non-USDC tokens (basket[0..3])
         for (uint256 i = 0; i < 4; i++) {

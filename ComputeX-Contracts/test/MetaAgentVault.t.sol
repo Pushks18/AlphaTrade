@@ -319,3 +319,69 @@ contract MetaAgentVaultTradeTest is Test {
         assertGt(weth.balanceOf(address(vault)), 0);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Task 7 — harvest tests
+// ---------------------------------------------------------------------------
+
+contract MetaAgentVaultHarvestTest is Test {
+    MetaAgentVault internal vault;
+    MockERC20      internal usdc;
+    MockKeeperHub  internal hub;
+
+    address internal registry;
+    address internal operator = address(0x0ABC);
+    address internal lp       = address(0xB2);
+    address[5] internal basket;
+
+    function setUp() public {
+        // MockRegistry is already declared in this file from Task 6
+        registry = address(new MockRegistry(operator, 0));
+
+        usdc = new MockERC20("USDC","USDC",6);
+        hub  = new MockKeeperHub();
+        basket[4] = address(usdc);
+        for (uint256 i = 0; i < 4; i++) basket[i] = address(usdc);
+
+        vault = new MetaAgentVault(
+            address(usdc), registry, 0, 1000, keccak256("p"),
+            address(0), address(0), address(hub), basket
+        );
+        usdc.mint(lp, 10_000e6);
+        vm.startPrank(lp);
+        usdc.approve(address(vault), 10_000e6);
+        vault.deposit(10_000e6, lp);
+        vm.stopPrank();
+    }
+
+    function test_harvest_noFeeWhenNoGain() public {
+        uint256 sharesBefore = vault.totalSupply();
+        vault.harvest();
+        assertEq(vault.totalSupply(), sharesBefore); // no new shares minted
+    }
+
+    function test_harvest_mintsFeeSharesOnGain() public {
+        usdc.mint(address(vault), 1_000e6); // 10% gain
+        uint256 sharesBefore = vault.totalSupply();
+        vault.harvest();
+        assertGt(vault.totalSupply(), sharesBefore);
+    }
+
+    function test_harvest_feeSentToOperator() public {
+        usdc.mint(address(vault), 1_000e6);
+        vault.harvest();
+        assertGt(vault.balanceOf(operator), 0);
+    }
+
+    function test_harvest_updatesLastHarvestAssets() public {
+        vault.harvest();
+        assertEq(vault.lastHarvestAssets(), vault.totalAssets());
+    }
+
+    function test_harvest_emitsEvent() public {
+        usdc.mint(address(vault), 500e6);
+        vm.expectEmit(false, false, false, false); // don't check any fields — just event emitted
+        emit MetaAgentVault.Harvested(0, 0, 0);
+        vault.harvest();
+    }
+}
