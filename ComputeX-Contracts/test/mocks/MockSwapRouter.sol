@@ -6,9 +6,9 @@ import {MockERC20} from "./MockERC20.sol";
 import {ISwapRouter} from "../../src/interfaces/IUniswapV3.sol";
 
 /// @dev 1:1 swap — pulls tokenIn from caller, mints amountIn of tokenOut.
-contract MockSwapRouter {
+contract MockSwapRouter is ISwapRouter {
     function exactInputSingle(ISwapRouter.ExactInputSingleParams calldata p)
-        external returns (uint256 amountOut)
+        external payable override returns (uint256 amountOut)
     {
         IERC20(p.tokenIn).transferFrom(msg.sender, address(this), p.amountIn);
         MockERC20(p.tokenOut).mint(p.recipient, p.amountIn);
