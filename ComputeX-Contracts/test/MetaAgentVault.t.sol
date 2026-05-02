@@ -204,3 +204,109 @@ contract MockModelMarketplaceSimple {
         lastPrice[tokenId] = price;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Task 6 — executeTrade tests
+// ---------------------------------------------------------------------------
+
+/// Minimal registry mock: operator owns agentId
+contract MockRegistry {
+    address internal _operator;
+    uint256 internal _id;
+    constructor(address op, uint256 id) { _operator = op; _id = id; }
+    function ownerOf(uint256 id) external view returns (address) {
+        require(id == _id, "no such id");
+        return _operator;
+    }
+}
+
+contract MetaAgentVaultTradeTest is Test {
+    MetaAgentVault internal vault;
+    MockERC20      internal usdc;
+    MockERC20      internal weth;
+    MockKeeperHub  internal hub;
+
+    address internal registry;
+    uint256 internal operatorKey = 0xA11CE_DEAD_BEEF;
+    address internal operator;
+    uint256 constant AGENT_ID = 0;
+    address[5] internal basket;
+
+    function setUp() public {
+        operator = vm.addr(operatorKey);
+        registry = address(new MockRegistry(operator, AGENT_ID));
+
+        usdc = new MockERC20("USDC","USDC",6);
+        weth = new MockERC20("WETH","WETH",18);
+        hub  = new MockKeeperHub();
+
+        basket[0] = address(weth);
+        basket[1] = basket[2] = basket[3] = address(weth);
+        basket[4] = address(usdc);
+
+        vault = new MetaAgentVault(
+            address(usdc), registry, AGENT_ID, 500, keccak256("p"),
+            address(0), address(0), address(hub), basket
+        );
+
+        usdc.mint(address(vault), 10_000e6);
+    }
+
+    function _sign(uint16[5] memory weights, uint256 blockNum)
+        internal view returns (bytes memory)
+    {
+        bytes32 msgHash = keccak256(abi.encodePacked(
+            weights[0], weights[1], weights[2], weights[3], weights[4],
+            blockNum,
+            address(vault)
+        ));
+        bytes32 ethHash = keccak256(abi.encodePacked(
+            "\x19Ethereum Signed Message:\n32", msgHash
+        ));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(operatorKey, ethHash);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_executeTrade_revertsOnStaleBlock() public {
+        uint16[5] memory w = [2000, 2000, 2000, 2000, 2000];
+        bytes memory sig = _sign(w, 1);
+        vm.roll(10); // advance 10 blocks
+        vm.expectRevert(bytes("Vault: stale sig"));
+        vault.executeTrade(w, 1, sig);
+    }
+
+    function test_executeTrade_revertsOnBadSig() public {
+        uint16[5] memory w = [2000, 2000, 2000, 2000, 2000];
+        uint256 bn = block.number;
+        bytes memory badSig = new bytes(65); // zero signature
+        vm.expectRevert();
+        vault.executeTrade(w, bn, badSig);
+    }
+
+    function test_executeTrade_revertsOnWeightsMismatch() public {
+        uint16[5] memory w = [2000, 2000, 2000, 2000, 2001]; // sums to 10001
+        uint256 bn = block.number;
+        bytes memory sig = _sign(w, bn);
+        vm.expectRevert(bytes("Vault: weights != 10000"));
+        vault.executeTrade(w, bn, sig);
+    }
+
+    function test_executeTrade_emitsEvent() public {
+        uint16[5] memory w = [2000, 2000, 2000, 2000, 2000];
+        uint256 bn = block.number;
+        bytes memory sig = _sign(w, bn);
+        vm.expectEmit(true, false, false, false);
+        emit MetaAgentVault.TradeExecuted(bn, 0);
+        vault.executeTrade(w, bn, sig);
+    }
+
+    function test_executeTrade_swapsTokens() public {
+        // 80% WETH, 20% USDC — vault starts 100% USDC so it should buy WETH
+        uint16[5] memory w = [8000, 0, 0, 0, 2000];
+        uint256 bn = block.number;
+        bytes memory sig = _sign(w, bn);
+        vault.executeTrade(w, bn, sig);
+        assertLt(usdc.balanceOf(address(vault)), 10_000e6);
+        assertGt(weth.balanceOf(address(vault)), 0);
+    }
+}

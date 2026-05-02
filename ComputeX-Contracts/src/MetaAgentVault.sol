@@ -7,6 +7,7 @@ import {IERC20}    from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721}   from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {IKeeperHub} from "./interfaces/IKeeperHub.sol";
 import {IModelMarketplace} from "./interfaces/IModelMarketplace.sol";
 
@@ -92,5 +93,86 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
         IERC721(modelNFT).approve(modelMarketplace, tokenId);
         IModelMarketplace(modelMarketplace).listModel(tokenId, price);
         emit ModelRelisted(tokenId, price);
+    }
+
+    /// @notice Execute a rebalance signed by the registry-NFT operator.
+    /// @param targetWeightsBps  5-element array of basis-point weights (must sum to 10 000).
+    /// @param blockNumber       Block at which the signature was created (staleness guard ≤ 5 blocks).
+    /// @param sig               65-byte ECDSA signature over (weights, blockNumber, address(this)).
+    function executeTrade(
+        uint16[5] calldata targetWeightsBps,
+        uint256 blockNumber,
+        bytes calldata sig
+    ) external nonReentrant {
+        require(block.number >= blockNumber, "Vault: future block");
+        require(block.number - blockNumber <= 5, "Vault: stale sig");
+
+        uint256 sum;
+        for (uint256 i = 0; i < 5; i++) sum += targetWeightsBps[i];
+        require(sum == 10_000, "Vault: weights != 10000");
+
+        bytes32 msgHash = keccak256(abi.encodePacked(
+            targetWeightsBps[0], targetWeightsBps[1], targetWeightsBps[2],
+            targetWeightsBps[3], targetWeightsBps[4],
+            blockNumber,
+            address(this)
+        ));
+        bytes32 ethHash = keccak256(abi.encodePacked(
+            "\x19Ethereum Signed Message:\n32", msgHash
+        ));
+        address signer = ECDSA.recover(ethHash, sig);
+        require(signer == IERC721(registry).ownerOf(vaultId), "Vault: bad sig");
+
+        uint256 navBefore = totalAssets();
+        _rebalance(targetWeightsBps, navBefore);
+        emit TradeExecuted(blockNumber, navBefore);
+    }
+
+    function _rebalance(uint16[5] calldata weights, uint256 nav) private {
+        // Pass 1: sell overweight non-USDC tokens (basket[0..3])
+        for (uint256 i = 0; i < 4; i++) {
+            uint256 current = IERC20(basket[i]).balanceOf(address(this));
+            if (current == 0) continue;
+            uint256 price = IKeeperHub(keeperHub).priceOf(basket[i], asset(), 3000);
+            if (price == 0) continue;
+            uint256 currentValueUsdc = (current * price) / 1e18;
+            uint256 targetValueUsdc  = (nav * weights[i]) / 10_000;
+            if (currentValueUsdc > targetValueUsdc + (nav * MIN_SWAP_BPS / 10_000)) {
+                uint256 sellUsdc = currentValueUsdc - targetValueUsdc;
+                uint256 sellAmt  = (sellUsdc * 1e18) / price;
+                _executeSwap(basket[i], asset(), sellAmt);
+            }
+        }
+        // Pass 2: buy underweight non-USDC tokens
+        uint256 usdcBal = IERC20(asset()).balanceOf(address(this));
+        for (uint256 i = 0; i < 4; i++) {
+            if (weights[i] == 0) continue;
+            uint256 price = IKeeperHub(keeperHub).priceOf(basket[i], asset(), 3000);
+            if (price == 0) continue;
+            uint256 current = IERC20(basket[i]).balanceOf(address(this));
+            uint256 currentValueUsdc = (current * price) / 1e18;
+            uint256 targetValueUsdc  = (nav * weights[i]) / 10_000;
+            if (targetValueUsdc > currentValueUsdc + (nav * MIN_SWAP_BPS / 10_000)) {
+                uint256 buyUsdc = targetValueUsdc - currentValueUsdc;
+                if (buyUsdc > usdcBal) buyUsdc = usdcBal;
+                if (buyUsdc > 0) {
+                    _executeSwap(asset(), basket[i], buyUsdc);
+                    usdcBal -= buyUsdc;
+                }
+            }
+        }
+    }
+
+    function _executeSwap(address tokenIn, address tokenOut, uint256 amountIn) private {
+        IKeeperHub.SwapInstruction[] memory swaps = new IKeeperHub.SwapInstruction[](1);
+        swaps[0] = IKeeperHub.SwapInstruction({
+            tokenIn:          tokenIn,
+            tokenOut:         tokenOut,
+            poolFee:          3000,
+            amountIn:         amountIn,
+            amountOutMinimum: 0
+        });
+        IERC20(tokenIn).forceApprove(keeperHub, amountIn);
+        IKeeperHub(keeperHub).executeSwaps(swaps);
     }
 }
