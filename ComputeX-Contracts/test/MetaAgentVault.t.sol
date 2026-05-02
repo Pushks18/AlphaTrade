@@ -136,21 +136,36 @@ contract MetaAgentVaultModelTest is Test {
         usdc.mint(address(vault), 2_000e6);
     }
 
-    function test_buyModel_transfersNFTToVault() public {
+    function test_depositModel_transfersNFTToVault() public {
         modelNFT.mint(operator, 1);
         vm.prank(operator);
         modelNFT.approve(address(vault), 1);
 
         vm.prank(operator);
-        vault.buyModel(1);
+        vault.depositModel(1);
 
         assertEq(modelNFT.ownerOf(1), address(vault));
     }
 
-    function test_buyModel_revertsForNonOperator() public {
+    function test_depositModel_revertsForNonOperator() public {
         vm.prank(lp);
         vm.expectRevert(bytes("Vault: not operator"));
-        vault.buyModel(1);
+        vault.depositModel(1);
+    }
+
+    function test_relistModel_revertsIfVaultNotOwner() public {
+        // tokenId 1 is owned by operator, not the vault
+        modelNFT.mint(operator, 1);
+
+        MockModelMarketplaceSimple mktplace = new MockModelMarketplaceSimple();
+        MetaAgentVault v2 = new MetaAgentVault(
+            address(usdc), registry, AGENT_ID2, 500, keccak256("p3"),
+            address(modelNFT), address(mktplace), address(hub), basket2
+        );
+
+        vm.prank(operator);
+        vm.expectRevert(bytes("Vault: not owner"));
+        v2.relistModel(1, 100e6);
     }
 
     function test_relistModel_callsMarketplace() public {

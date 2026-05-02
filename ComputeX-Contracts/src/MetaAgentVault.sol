@@ -31,7 +31,7 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
 
     event TradeExecuted(uint256 indexed blockNumber, uint256 navBefore);
     event Harvested(uint256 nav, uint256 gain, uint256 feeShares);
-    event ModelBought(uint256 indexed tokenId);
+    event ModelDeposited(uint256 indexed tokenId);
     event ModelRelisted(uint256 indexed tokenId, uint256 price);
 
     modifier onlyOperator() {
@@ -78,16 +78,17 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
         }
     }
 
-    /// @notice Pull a model NFT into this vault's portfolio.
+    /// @notice Pull a model NFT the operator already owns into this vault's portfolio.
     ///         The operator must approve the vault on the ModelNFT contract first.
-    function buyModel(uint256 tokenId) external onlyOperator nonReentrant {
+    function depositModel(uint256 tokenId) external onlyOperator nonReentrant {
         IERC721(modelNFT).transferFrom(msg.sender, address(this), tokenId);
-        emit ModelBought(tokenId);
+        emit ModelDeposited(tokenId);
     }
 
     /// @notice Approve and list a vault-owned model NFT on ModelMarketplace.
     function relistModel(uint256 tokenId, uint256 price) external onlyOperator nonReentrant {
         require(modelMarketplace != address(0), "Vault: no marketplace");
+        require(IERC721(modelNFT).ownerOf(tokenId) == address(this), "Vault: not owner");
         IERC721(modelNFT).approve(modelMarketplace, tokenId);
         IModelMarketplace(modelMarketplace).listModel(tokenId, price);
         emit ModelRelisted(tokenId, price);
