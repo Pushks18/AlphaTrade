@@ -6,16 +6,14 @@ import {ERC20}     from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20}    from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721}   from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IKeeperHub} from "./interfaces/IKeeperHub.sol";
-
-interface IModelMarketplace {
-    function listModel(uint256 tokenId, uint256 price) external;
-}
+import {IModelMarketplace} from "./interfaces/IModelMarketplace.sol";
 
 /// @title MetaAgentVault (stub — full implementation in Task 4)
 /// @notice ERC-4626 vault that holds USDC on behalf of a MetaAgent NFT.
 ///         Deployed by MetaAgentRegistry.deploy(); receives swap rights via KeeperHub.
-contract MetaAgentVault is ERC4626 {
+contract MetaAgentVault is ERC4626, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     address public immutable registry;
@@ -78,5 +76,20 @@ contract MetaAgentVault is ERC4626 {
                 if (price > 0) total += (bal * price) / 1e18;
             }
         }
+    }
+
+    /// @notice Pull a model NFT into this vault's portfolio.
+    ///         The operator must approve the vault on the ModelNFT contract first.
+    function buyModel(uint256 tokenId) external onlyOperator nonReentrant {
+        IERC721(modelNFT).transferFrom(msg.sender, address(this), tokenId);
+        emit ModelBought(tokenId);
+    }
+
+    /// @notice Approve and list a vault-owned model NFT on ModelMarketplace.
+    function relistModel(uint256 tokenId, uint256 price) external onlyOperator nonReentrant {
+        require(modelMarketplace != address(0), "Vault: no marketplace");
+        IERC721(modelNFT).approve(modelMarketplace, tokenId);
+        IModelMarketplace(modelMarketplace).listModel(tokenId, price);
+        emit ModelRelisted(tokenId, price);
     }
 }

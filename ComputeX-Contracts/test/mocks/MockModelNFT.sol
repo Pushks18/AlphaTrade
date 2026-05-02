@@ -8,6 +8,36 @@ contract MockModelNFT {
     mapping(uint256 => uint16)  public lastSlasherBps;
     uint256 public slashPaidStub = 0.05 ether;
 
+    // Minimal ERC-721 state for vault tests
+    mapping(uint256 => address) private _owners;
+    mapping(uint256 => address) private _approved;
+
+    function mint(address to, uint256 tokenId) external {
+        _owners[tokenId] = to;
+    }
+
+    function ownerOf(uint256 tokenId) external view returns (address) {
+        return _owners[tokenId];
+    }
+
+    function approve(address spender, uint256 tokenId) external {
+        _approved[tokenId] = spender;
+    }
+
+    function getApproved(uint256 tokenId) external view returns (address) {
+        return _approved[tokenId];
+    }
+
+    function transferFrom(address from, address to, uint256 tokenId) external {
+        require(_owners[tokenId] == from, "MockModelNFT: wrong owner");
+        require(
+            msg.sender == from || msg.sender == _approved[tokenId],
+            "MockModelNFT: not approved"
+        );
+        _owners[tokenId] = to;
+        _approved[tokenId] = address(0);
+    }
+
     function setWeightsHash(uint256 tokenId, bytes32 h) external { weightsHashOf[tokenId] = h; }
     function setPerformanceScore(uint256 tokenId, uint256 score) external { scores[tokenId] = score; }
 

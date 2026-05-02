@@ -99,3 +99,93 @@ contract MetaAgentVaultCoreTest is Test {
         assertEq(vault.totalAssets(), 1_500e6);
     }
 }
+
+contract MetaAgentVaultModelTest is Test {
+    MetaAgentVault internal vault;
+    MockERC20      internal usdc;
+    MockKeeperHub  internal hub;
+    MockModelNFT   internal modelNFT;
+
+    address internal registry = address(0xAA02);
+    address internal operator = address(0x0ABC);
+    address internal lp       = address(0xB3);
+
+    uint256 constant AGENT_ID2 = 7;
+    address[5] internal basket2;
+
+    function setUp() public {
+        usdc     = new MockERC20("USDC","USDC",6);
+        hub      = new MockKeeperHub();
+        modelNFT = new MockModelNFT();
+
+        basket2[4] = address(usdc);
+        for (uint256 i = 0; i < 4; i++) basket2[i] = address(new MockERC20("T","T",18));
+
+        // mock registry: operator owns NFT id AGENT_ID2
+        vm.mockCall(
+            registry,
+            abi.encodeWithSelector(IERC721.ownerOf.selector, AGENT_ID2),
+            abi.encode(operator)
+        );
+
+        vault = new MetaAgentVault(
+            address(usdc), registry, AGENT_ID2, 500, keccak256("p"),
+            address(modelNFT), address(0), address(hub), basket2
+        );
+
+        usdc.mint(address(vault), 2_000e6);
+    }
+
+    function test_buyModel_transfersNFTToVault() public {
+        modelNFT.mint(operator, 1);
+        vm.prank(operator);
+        modelNFT.approve(address(vault), 1);
+
+        vm.prank(operator);
+        vault.buyModel(1);
+
+        assertEq(modelNFT.ownerOf(1), address(vault));
+    }
+
+    function test_buyModel_revertsForNonOperator() public {
+        vm.prank(lp);
+        vm.expectRevert(bytes("Vault: not operator"));
+        vault.buyModel(1);
+    }
+
+    function test_relistModel_callsMarketplace() public {
+        // Vault owns tokenId 1
+        modelNFT.mint(address(vault), 1);
+
+        // Deploy a minimal marketplace mock inline
+        MockModelMarketplaceSimple mktplace = new MockModelMarketplaceSimple();
+
+        // Re-deploy vault with the marketplace address
+        MetaAgentVault v2 = new MetaAgentVault(
+            address(usdc), registry, AGENT_ID2, 500, keccak256("p2"),
+            address(modelNFT), address(mktplace), address(hub), basket2
+        );
+        // Transfer NFT to v2
+        vm.prank(address(vault));
+        modelNFT.transferFrom(address(vault), address(v2), 1);
+
+        vm.prank(operator);
+        v2.relistModel(1, 500e6);
+
+        assertEq(mktplace.lastPrice(1), 500e6);
+    }
+
+    function test_relistModel_revertsForNonOperator() public {
+        modelNFT.mint(address(vault), 1);
+        vm.prank(lp);
+        vm.expectRevert(bytes("Vault: not operator"));
+        vault.relistModel(1, 100e6);
+    }
+}
+
+contract MockModelMarketplaceSimple {
+    mapping(uint256 => uint256) public lastPrice;
+    function listModel(uint256 tokenId, uint256 price) external {
+        lastPrice[tokenId] = price;
+    }
+}
