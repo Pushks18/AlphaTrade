@@ -76,7 +76,7 @@ contract KeeperHub is IKeeperHub, Ownable {
         if (token0 == tokenIn) {
             return (sq * sq * 1e18) >> 192;
         } else {
-            return ((1 << 192) / (sq * sq / 1e18));
+            return ((1 << 192) * 1e18) / (sq * sq);
         }
     }
 }
