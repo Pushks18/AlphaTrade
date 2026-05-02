@@ -6,14 +6,16 @@ import GPUPanel from "./components/GPUPanel";
 import JobPanel from "./components/JobPanel";
 import NFTPanel from "./components/NFTPanel";
 import MarketPanel from "./components/MarketPanel";
+import AgentPanel  from "./components/AgentPanel";
 
-export type Tab = "gpu" | "jobs" | "nfts" | "market";
+export type Tab = "gpu" | "jobs" | "nfts" | "market" | "agents";
 
 const TABS: { key: Tab; num: string; label: string }[] = [
   { key: "gpu",    num: "01", label: "GPU Market"   },
   { key: "jobs",   num: "02", label: "Compute Jobs" },
   { key: "nfts",   num: "03", label: "Model NFTs"   },
   { key: "market", num: "04", label: "Trade"        },
+  { key: "agents", num: "05", label: "Meta-Agents"  },
 ];
 
 // Mock stats — would come from contract reads in prod
@@ -21,6 +23,7 @@ const STATS = [
   { label: "Active GPUs",    value: "24",     delta: "+3 today", up: true,  color: "var(--text-primary)" },
   { label: "Jobs Running",   value: "7",      delta: "+2 today", up: true,  color: "var(--blue)"         },
   { label: "Models Minted",  value: "142",    delta: "+12 wk",   up: true,  color: "var(--purple)"       },
+  { label: "Meta-Agents",    value: "3",      delta: "+1 today", up: true,  color: "var(--cyan)"         },
   { label: "Total Volume",   value: "3.8 ETH",delta: "+0.6 ETH", up: true,  color: "var(--green)"        },
 ];
 
@@ -71,6 +74,7 @@ export default function Home() {
             {tab === "jobs"   && <JobPanel    wallet={wallet} chainId={chainId} />}
             {tab === "nfts"   && <NFTPanel    wallet={wallet} chainId={chainId} />}
             {tab === "market" && <MarketPanel wallet={wallet} chainId={chainId} />}
+            {tab === "agents" && <AgentPanel  wallet={wallet} chainId={chainId} />}
           </div>
         </div>
 

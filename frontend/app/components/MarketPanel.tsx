@@ -404,12 +404,4 @@ export default function MarketPanel({ wallet, chainId }: Props) {
     </div>
   );
 
-  function LogLines({ lines }: { lines: string[] }) {
-    return <>{lines.map((l,i) => {
-      const [type,...rest] = l.split("|");
-      const cls = type==="ok"?"log-ok":type==="err"?"log-err":type==="tx"?"log-tx":type==="event"?"log-event":type==="warn"?"log-warn":"log-info";
-      const [time,...msg] = rest.join("|").split(" ");
-      return <div key={i} className="log-line"><span className="log-ts">{time}</span><span className={cls}>{msg.join(" ")}</span></div>;
-    })}</>;
-  }
 }
