@@ -295,8 +295,17 @@ contract MetaAgentVaultTradeTest is Test {
         uint16[5] memory w = [2000, 2000, 2000, 2000, 2000];
         uint256 bn = block.number;
         bytes memory sig = _sign(w, bn);
-        vm.expectEmit(true, false, false, false);
-        emit MetaAgentVault.TradeExecuted(bn, 0);
+        // checkTopic1 (blockNumber indexed), skip topic2/topic3, checkData (navBefore)
+        vm.expectEmit(true, false, false, true);
+        emit MetaAgentVault.TradeExecuted(bn, 10_000e6);
+        vault.executeTrade(w, bn, sig);
+    }
+
+    function test_executeTrade_revertsOnFutureBlock() public {
+        uint16[5] memory w = [2000, 2000, 2000, 2000, 2000];
+        uint256 bn = block.number + 100;
+        bytes memory sig = _sign(w, bn);
+        vm.expectRevert(bytes("Vault: future block"));
         vault.executeTrade(w, bn, sig);
     }
 

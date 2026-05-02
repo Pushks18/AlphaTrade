@@ -99,6 +99,7 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
     /// @param targetWeightsBps  5-element array of basis-point weights (must sum to 10 000).
     /// @param blockNumber       Block at which the signature was created (staleness guard ≤ 5 blocks).
     /// @param sig               65-byte ECDSA signature over (weights, blockNumber, address(this)).
+    // weights are uint16; Python keeper_client must pack as uint16 in abi.encodePacked
     function executeTrade(
         uint16[5] calldata targetWeightsBps,
         uint256 blockNumber,
@@ -131,6 +132,7 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
     function _rebalance(uint16[5] calldata weights, uint256 nav) private {
         // Pass 1: sell overweight non-USDC tokens (basket[0..3])
         for (uint256 i = 0; i < 4; i++) {
+            if (basket[i] == asset()) continue; // USDC is the quote currency, handled as residual
             uint256 current = IERC20(basket[i]).balanceOf(address(this));
             if (current == 0) continue;
             uint256 price = IKeeperHub(keeperHub).priceOf(basket[i], asset(), 3000);
@@ -146,6 +148,7 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
         // Pass 2: buy underweight non-USDC tokens
         uint256 usdcBal = IERC20(asset()).balanceOf(address(this));
         for (uint256 i = 0; i < 4; i++) {
+            if (basket[i] == asset()) continue; // USDC is the quote currency, handled as residual
             if (weights[i] == 0) continue;
             uint256 price = IKeeperHub(keeperHub).priceOf(basket[i], asset(), 3000);
             if (price == 0) continue;
