@@ -100,11 +100,11 @@ Critical invariants enforced by tests, do not break:
 
 ## Status
 
-**Plan 1 — Verification Layer:** 17/18 tasks ✅ (G1 end-to-end test pending scope decision)
+**Plan 1 — Verification Layer:** 18/18 tasks ✅ COMPLETE
 **Plan 2 — Meta-Agent Layer:** ⏳ not started
 **Plan 3 — Production Polish:** ⏳ not started
 
-Test gates: **121/121 forge** + **13/13 pytest** + **11/11 TS smoke** all green.
+Test gates: **130/130 forge** + **13/13 pytest** all green. TS smoke requires prior train.py/prove.py run.
 
 | Component | State |
 |---|---|
@@ -134,3 +134,42 @@ plans for sibling projects (coastal-run, sushi-master, lifeOS, etc.) live in
 The MCP knowledge graph (`mcp__code-review-graph__*`) does **not** parse
 Solidity. For this repo, fall back to `grep`/`Read`. The graph is still the
 right tool for the Python/TS sibling projects.
+
+<!-- code-review-graph MCP tools -->
+## MCP Tools: code-review-graph
+
+**IMPORTANT: This project has a knowledge graph. ALWAYS use the
+code-review-graph MCP tools BEFORE using Grep/Glob/Read to explore
+the codebase.** The graph is faster, cheaper (fewer tokens), and gives
+you structural context (callers, dependents, test coverage) that file
+scanning cannot.
+
+### When to use graph tools FIRST
+
+- **Exploring code**: `semantic_search_nodes` or `query_graph` instead of Grep
+- **Understanding impact**: `get_impact_radius` instead of manually tracing imports
+- **Code review**: `detect_changes` + `get_review_context` instead of reading entire files
+- **Finding relationships**: `query_graph` with callers_of/callees_of/imports_of/tests_for
+- **Architecture questions**: `get_architecture_overview` + `list_communities`
+
+Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
+
+### Key Tools
+
+| Tool | Use when |
+|------|----------|
+| `detect_changes` | Reviewing code changes — gives risk-scored analysis |
+| `get_review_context` | Need source snippets for review — token-efficient |
+| `get_impact_radius` | Understanding blast radius of a change |
+| `get_affected_flows` | Finding which execution paths are impacted |
+| `query_graph` | Tracing callers, callees, imports, tests, dependencies |
+| `semantic_search_nodes` | Finding functions/classes by name or keyword |
+| `get_architecture_overview` | Understanding high-level codebase structure |
+| `refactor_tool` | Planning renames, finding dead code |
+
+### Workflow
+
+1. The graph auto-updates on file changes (via hooks).
+2. Use `detect_changes` for code review.
+3. Use `get_affected_flows` to understand impact.
+4. Use `query_graph` pattern="tests_for" to check coverage.

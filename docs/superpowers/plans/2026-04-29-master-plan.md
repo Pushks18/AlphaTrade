@@ -101,7 +101,7 @@ A decentralized GPU compute + AI-trading-model marketplace. GPU providers list c
 
 ## 4. Plan structure (3 plans)
 
-### Plan 1 — Verification Layer  ✅ 17/18 tasks DONE
+### Plan 1 — Verification Layer  ✅ 18/18 tasks DONE
 Path: `docs/superpowers/plans/2026-04-28-verification-layer.md`
 
 | Phase | Task | Status |
@@ -112,9 +112,9 @@ Path: `docs/superpowers/plans/2026-04-28-verification-layer.md`
 | D | ModelNFT ↔ CreatorRegistry hooks | ✅ |
 | E | Python zkML pipeline (model, feed, backtest, train, prove) | ✅ |
 | F | TS audit-submitter + orchestrator wiring | ✅ |
-| G1 | End-to-end Anvil integration test | ⏳ pending scope decision |
+| G1 | End-to-end Anvil integration test | ✅ MockVerifier route, 9 tests |
 
-**Gates:** 121/121 forge tests, 13/13 pytest, 11/11 TS smoke checks all passing.
+**Gates:** 130/130 forge tests, 13/13 pytest. TS smoke requires prior train.py/prove.py run.
 
 ### Plan 2 — Meta-Agent Layer (PLANNED, not started)
 - `MetaAgentRegistry` — register agents, track NAV / Sharpe
