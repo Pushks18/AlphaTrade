@@ -7,6 +7,8 @@ import {
   META_AGENT_VAULT_ABI,
   ERC20_ABI,
 } from "../lib/contracts";
+import VaultDetail from "./VaultDetail";
+import { lookupAddress, getBoundName } from "../lib/ens";
 
 interface Props { wallet: string | null; chainId: number; }
 function ts() { return new Date().toLocaleTimeString("en-US", { hour12: false }); }
@@ -20,6 +22,7 @@ interface VaultRow {
   perfFee:    number;
   userShares: string;
   userSharesFmt: string;
+  ensName?:   string | null;
 }
 
 function fmtUsdc(raw: bigint): string {
@@ -43,6 +46,7 @@ export default function AgentPanel({ wallet, chainId }: Props) {
   const [view,        setView]        = useState<"leaderboard" | "deploy">("leaderboard");
   const [perfFee,     setPerfFee]     = useState("500");
   const [userBalance, setUserBalance] = useState<string>("0.00");
+  const [detailVault, setDetailVault] = useState<VaultRow | null>(null);
 
   const addLog = (msg: string, type = "info") => setLog(l => [...l, `${type}|${ts()} ${msg}`]);
 
@@ -74,6 +78,13 @@ export default function AgentPanel({ wallet, chainId }: Props) {
           if (wallet) {
             userSharesRaw = await vault.balanceOf(wallet);
           }
+          // ENS: prefer manually-bound name, otherwise reverse lookup.
+          // Reverse lookup only succeeds on Sepolia/mainnet for addresses
+          // that have set a primary name; otherwise it's null.
+          let ensName: string | null = getBoundName(vaultAddr);
+          if (!ensName && (chainId === 1 || chainId === 11155111)) {
+            ensName = await lookupAddress(p, vaultAddr);
+          }
           rows.push({
             agentId:       i,
             vault:         vaultAddr,
@@ -83,6 +94,7 @@ export default function AgentPanel({ wallet, chainId }: Props) {
             perfFee:       Number(perfFeeBps),
             userShares:    userSharesRaw.toString(),
             userSharesFmt: fmtShares(userSharesRaw),
+            ensName,
           });
         } catch { /* skip malformed vault */ }
       }
@@ -300,12 +312,25 @@ export default function AgentPanel({ wallet, chainId }: Props) {
                   {i === 0 ? "🥇" : `#${i + 1}`}
                 </span>
                 <div>
-                  <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>
-                    {short(v.vault)}
-                  </span>
-                  <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
-                    Agent #{v.agentId}
-                  </div>
+                  {v.ensName ? (
+                    <>
+                      <span style={{ fontWeight: 600, fontSize: 13, color: "var(--blue)" }}>
+                        {v.ensName}
+                      </span>
+                      <div style={{ fontSize: 10.5, color: "var(--text-tertiary)", marginTop: 2, fontFamily: "JetBrains Mono, monospace" }}>
+                        {short(v.vault)} · Agent #{v.agentId}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 12 }}>
+                        {short(v.vault)}
+                      </span>
+                      <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
+                        Agent #{v.agentId}
+                      </div>
+                    </>
+                  )}
                 </div>
                 <span style={{ textAlign: "right", fontVariantNumeric: "tabular-nums", fontWeight: 600 }}>
                   {v.navFmt}
@@ -316,7 +341,18 @@ export default function AgentPanel({ wallet, chainId }: Props) {
                 <span style={{ textAlign: "right", fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
                   {v.userSharesFmt}
                 </span>
-                <div style={{ textAlign: "right" }}>
+                <div style={{ textAlign: "right", display: "flex", gap: 4, justifyContent: "flex-end" }}>
+                  <button
+                    onClick={e => { e.stopPropagation(); setDetailVault(v); }}
+                    style={{
+                      padding: "4px 10px", fontSize: 11, fontWeight: 600,
+                      border: "1px solid var(--border)", borderRadius: 4,
+                      background: "var(--bg-card)", color: "var(--text-primary)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Details
+                  </button>
                   <button
                     onClick={e => { e.stopPropagation(); setSelected(v); }}
                     style={{ ...actionBtn(false), padding: "4px 10px", fontSize: 11 }}
@@ -369,7 +405,8 @@ export default function AgentPanel({ wallet, chainId }: Props) {
           <div style={{ fontSize: 22, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>
             {userBalance} <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text-secondary)" }}>USDC</span>
           </div>
-          {chainId === 11155111 && (
+          {/* Faucet works on Anvil (31337) and Sepolia (11155111). Both use MockERC20 with open mint. */}
+          {(chainId === 31337 || chainId === 11155111) && (
             <button
               style={{ ...actionBtn(!wallet || busy), marginTop: 10, width: "100%", fontSize: 12 }}
               onClick={mintUsdc} disabled={!wallet || busy}
@@ -451,6 +488,16 @@ export default function AgentPanel({ wallet, chainId }: Props) {
           </div>
         )}
       </div>
+
+      {/* Slide-in detail drawer */}
+      {detailVault && (
+        <VaultDetail
+          vaultAddr={detailVault.vault}
+          agentId={detailVault.agentId}
+          chainId={chainId}
+          onClose={() => setDetailVault(null)}
+        />
+      )}
     </div>
   );
 }

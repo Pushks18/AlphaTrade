@@ -7,15 +7,17 @@ import JobPanel from "./components/JobPanel";
 import NFTPanel from "./components/NFTPanel";
 import MarketPanel from "./components/MarketPanel";
 import AgentPanel  from "./components/AgentPanel";
+import PortfolioPanel from "./components/PortfolioPanel";
 
-export type Tab = "gpu" | "jobs" | "nfts" | "market" | "agents";
+export type Tab = "gpu" | "jobs" | "nfts" | "market" | "agents" | "portfolio";
 
 const TABS: { key: Tab; num: string; label: string }[] = [
-  { key: "gpu",    num: "01", label: "GPU Market"   },
-  { key: "jobs",   num: "02", label: "Compute Jobs" },
-  { key: "nfts",   num: "03", label: "Model NFTs"   },
-  { key: "market", num: "04", label: "Trade"        },
-  { key: "agents", num: "05", label: "Meta-Agents"  },
+  { key: "gpu",       num: "01", label: "GPU Market"   },
+  { key: "jobs",      num: "02", label: "Compute Jobs" },
+  { key: "nfts",      num: "03", label: "Model NFTs"   },
+  { key: "market",    num: "04", label: "Trade"        },
+  { key: "agents",    num: "05", label: "Meta-Agents"  },
+  { key: "portfolio", num: "06", label: "Portfolio"    },
 ];
 
 // Mock stats — would come from contract reads in prod
@@ -27,10 +29,31 @@ const STATS = [
   { label: "Total Volume",   value: "3.8 ETH",delta: "+0.6 ETH", up: true,  color: "var(--green)"        },
 ];
 
+export interface FlowState {
+  lastGpuId:   string;
+  lastJobId:   string;
+  lastTokenId: string;
+  setLastGpuId:   (v: string) => void;
+  setLastJobId:   (v: string) => void;
+  setLastTokenId: (v: string) => void;
+  setTab:         (t: Tab)   => void;
+}
+
 export default function Home() {
   const [tab,     setTab]     = useState<Tab>("gpu");
   const [wallet,  setWallet]  = useState<string | null>(null);
   const [chainId, setChainId] = useState<number>(31337);
+
+  // Cross-tab handoff: each tab pushes its result forward.
+  const [lastGpuId,   setLastGpuId]   = useState<string>("");
+  const [lastJobId,   setLastJobId]   = useState<string>("");
+  const [lastTokenId, setLastTokenId] = useState<string>("");
+
+  const flow: FlowState = {
+    lastGpuId, lastJobId, lastTokenId,
+    setLastGpuId, setLastJobId, setLastTokenId,
+    setTab,
+  };
 
   return (
     <div style={{ minHeight: "100vh" }}>
@@ -68,13 +91,14 @@ export default function Home() {
             ))}
           </div>
 
-          {/* ── Panel content ── */}
-          <div className="anim-fade-up" key={tab}>
-            {tab === "gpu"    && <GPUPanel    wallet={wallet} chainId={chainId} />}
-            {tab === "jobs"   && <JobPanel    wallet={wallet} chainId={chainId} />}
-            {tab === "nfts"   && <NFTPanel    wallet={wallet} chainId={chainId} />}
-            {tab === "market" && <MarketPanel wallet={wallet} chainId={chainId} />}
-            {tab === "agents" && <AgentPanel  wallet={wallet} chainId={chainId} />}
+          {/* ── Panel content (all mounted; inactive hidden so state survives) ── */}
+          <div>
+            <div style={{ display: tab === "gpu"    ? "block" : "none" }}><GPUPanel    wallet={wallet} chainId={chainId} flow={flow} /></div>
+            <div style={{ display: tab === "jobs"   ? "block" : "none" }}><JobPanel    wallet={wallet} chainId={chainId} flow={flow} /></div>
+            <div style={{ display: tab === "nfts"   ? "block" : "none" }}><NFTPanel    wallet={wallet} chainId={chainId} flow={flow} /></div>
+            <div style={{ display: tab === "market" ? "block" : "none" }}><MarketPanel wallet={wallet} chainId={chainId} flow={flow} /></div>
+            <div style={{ display: tab === "agents" ? "block" : "none" }}><AgentPanel  wallet={wallet} chainId={chainId} /></div>
+            <div style={{ display: tab === "portfolio" ? "block" : "none" }}><PortfolioPanel wallet={wallet} chainId={chainId} flow={flow} /></div>
           </div>
         </div>
 
@@ -96,7 +120,7 @@ export default function Home() {
             </span>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            {["0G Chain", "ERC-7857", "KeeperHub", "Uniswap V3"].map(t => (
+            {["0G Chain", "ERC-7857", "TradingExecutor", "Uniswap V3"].map(t => (
               <span key={t} className="pill" style={{ fontSize: 11 }}>{t}</span>
             ))}
           </div>

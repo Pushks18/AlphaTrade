@@ -1,17 +1,14 @@
 "use client";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 import { getAddresses, MODEL_NFT_ABI, MODEL_MARKETPLACE_ABI } from "../lib/contracts";
+import type { FlowState } from "../page";
 
-interface Props { wallet: string | null; chainId: number; }
+interface Props { wallet: string | null; chainId: number; flow: FlowState; }
 function ts() { return new Date().toLocaleTimeString("en-US", { hour12: false }); }
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-const MOCK_LISTINGS = [
-  { tokenId: 1, seller: "0xaBc1…3f22", price: "0.12", desc: "Trend-following RL predictor v1", score: 82, active: true  },
-  { tokenId: 2, seller: "0x9fD2…a811", price: "0.08", desc: "LSTM momentum strategy v2",       score: 71, active: true  },
-  { tokenId: 3, seller: "0xaBc1…3f22", price: "0.25", desc: "Volatility arbitrage model",      score: 91, active: false },
-];
+type Row = { tokenId: number; seller: string; price: string; desc: string; score: number; active: boolean };
 
 function useToast() {
   const [toasts, setToasts] = useState<{ id: number; msg: string; type: string }[]>([]);
@@ -23,10 +20,20 @@ function useToast() {
   return { toasts, show };
 }
 
-export default function MarketPanel({ wallet, chainId }: Props) {
+export default function MarketPanel({ wallet, chainId, flow }: Props) {
   const [tokenId,     setTokenId]     = useState("1");
   const [price,       setPrice]       = useState("0.05");
   const [buyId,       setBuyId]       = useState("");
+
+  // Auto-prefill + jump to Sell view when arriving from the Model NFTs tab.
+  useEffect(() => {
+    if (flow.lastTokenId && flow.lastTokenId !== tokenId) {
+      setTokenId(flow.lastTokenId);
+      setBuyId(flow.lastTokenId);
+      setView("sell");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow.lastTokenId]);
   const [listing,     setListing]     = useState<any>(null);
   const [log,         setLog]         = useState<string[]>([]);
   const [busy,        setBusy]        = useState(false);
@@ -51,13 +58,50 @@ export default function MarketPanel({ wallet, chainId }: Props) {
     });
   }
 
-  function selectListing(l: typeof MOCK_LISTINGS[0]) {
+  const [chainListings, setChainListings] = useState<Row[] | null>(null);
+
+  function selectListing(l: Row) {
     setSelectedRow(l.tokenId);
     setBuyId(String(l.tokenId));
     setListing({ tokenId: String(l.tokenId), seller: l.seller, price: l.price, active: l.active });
     flashBuyPanel();
     showToast(`NFT #${l.tokenId} loaded — ${l.price} ETH`, "info");
   }
+
+  const fetchChainListings = useCallback(async () => {
+    try {
+      const { nft, mkt } = await getContracts();
+      const next: bigint = await nft.nextTokenId();
+      const rows: Row[] = [];
+      for (let id = 1n; id < next; id++) {
+        const lst = await mkt.listings(id);
+        const seller: string = lst[1];
+        if (seller === ethers.ZeroAddress) continue;
+        let desc = `Model #${id}`;
+        try {
+          const uri: string = await nft.tokenURI(id);
+          if (uri && uri.length < 200) desc = uri;
+        } catch {}
+        let score = 0;
+        try { score = Number(await nft.performanceScore(id)); } catch {}
+        rows.push({
+          tokenId: Number(id),
+          seller: `${seller.slice(0,6)}…${seller.slice(-4)}`,
+          price: ethers.formatEther(lst[2]),
+          desc,
+          score: score > 100 ? Math.round(score / 100) : score,
+          active: lst[3],
+        });
+      }
+      setChainListings(rows);
+    } catch (e: any) {
+      addLog(`fetch listings failed: ${e.shortMessage ?? e.message?.slice(0,60)}`, "err");
+      setChainListings([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chainId]);
+
+  useEffect(() => { if (typeof window !== "undefined" && window.ethereum) fetchChainListings(); }, [fetchChainListings, wallet]);
 
   async function getContracts(write = false) {
     const addr = getAddresses(chainId);
@@ -82,6 +126,7 @@ export default function MarketPanel({ wallet, chainId }: Props) {
       addLog(`Listing: ${t2.hash}`, "tx"); await t2.wait();
       addLog(`Model #${tokenId} listed at ${price} ETH ✓`, "ok");
       showToast(`NFT #${tokenId} listed for ${price} ETH`, "success");
+      fetchChainListings();
     } catch (e: any) { addLog(`${e.reason ?? e.message?.slice(0,80)}`, "err"); showToast("Failed", "error"); }
     setBusy(false);
   }
@@ -100,6 +145,7 @@ export default function MarketPanel({ wallet, chainId }: Props) {
       addLog(`NFT #${buyId} purchased ✓`, "ok");
       showToast(`NFT #${buyId} purchased!`, "success");
       setListing(null); setSelectedRow(null);
+      fetchChainListings();
     } catch (e: any) { addLog(`${e.reason ?? e.message?.slice(0,80)}`, "err"); showToast("Failed", "error"); }
     setBusy(false);
   }
@@ -129,7 +175,7 @@ export default function MarketPanel({ wallet, chainId }: Props) {
     setSignal(sig);
     addAgentLog(`Signal: ${sig.action} ${sig.amount} ${sig.from}→${sig.to} (${sig.confidence}% confidence)`, sig.action==="BUY"?"ok":"warn");
     addAgentLog("Encoding Uniswap V3 calldata…", "event"); await sleep(800);
-    addAgentLog("Submitting to KeeperHub MEV-protected relay…", "event"); await sleep(1100);
+    addAgentLog("Submitting to TradingExecutor MEV-protected relay…", "event"); await sleep(1100);
     const h = "0x" + Array.from({length:40},()=>"0123456789abcdef"[Math.floor(Math.random()*16)]).join("");
     addAgentLog(`Tx confirmed: ${h}…`, "tx");
     addAgentLog(`Swapped ${sig.amount} ${sig.from} → ${sig.to} on Uniswap V3 ✓`, "ok");
@@ -182,7 +228,8 @@ export default function MarketPanel({ wallet, chainId }: Props) {
             <div style={{ padding:"14px 16px", borderBottom:"1px solid var(--border)", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
               <div style={{ display:"flex", gap:8, alignItems:"center" }}>
                 <span style={{ fontWeight:600, fontSize:13 }}>Active Listings</span>
-                <span className="badge badge-green"><span className="dot dot-green" />{MOCK_LISTINGS.filter(l=>l.active).length} live</span>
+                <span className="badge badge-green"><span className="dot dot-green" />{(chainListings ?? []).filter(l=>l.active).length} live</span>
+                <button className="btn btn-ghost btn-xs" onClick={fetchChainListings}>↻</button>
               </div>
             </div>
 
@@ -195,7 +242,12 @@ export default function MarketPanel({ wallet, chainId }: Props) {
             <table className="data-table" style={{ width:"100%" }}>
               <thead><tr><th>Token</th><th>Description</th><th>Score</th><th>Price</th><th>Status</th><th>Action</th></tr></thead>
               <tbody>
-                {MOCK_LISTINGS.map(l => (
+                {(chainListings ?? []).length === 0 && (
+                  <tr><td colSpan={6} style={{ padding:"32px 16px", textAlign:"center", color:"var(--text-tertiary)", fontSize:12 }}>
+                    {chainListings === null ? "Loading on-chain listings…" : "No active listings yet — mint a Model NFT and list it from the Sell tab."}
+                  </td></tr>
+                )}
+                {(chainListings ?? []).map(l => (
                   <tr key={l.tokenId} className={selectedRow===l.tokenId?"row-selected":""} style={{ cursor:"pointer" }} onClick={() => selectListing(l)}>
                     <td><span className="mono" style={{ fontSize:11, color:"var(--text-tertiary)" }}>#{l.tokenId}</span></td>
                     <td>
@@ -255,7 +307,7 @@ export default function MarketPanel({ wallet, chainId }: Props) {
                         {listing.price} <span style={{ fontSize:12, fontWeight:400, color:"var(--text-tertiary)" }}>ETH</span>
                       </div>
                       <div style={{ fontSize:10.5, color:"var(--text-tertiary)", marginTop:4 }}>
-                        {MOCK_LISTINGS.find(l=>String(l.tokenId)===String(listing.tokenId))?.desc}
+                        {(chainListings ?? []).find(l=>String(l.tokenId)===String(listing.tokenId))?.desc}
                       </div>
                     </div>
                     <span className={`badge ${listing.active?"badge-green":"badge-red"}`}>
@@ -361,10 +413,10 @@ export default function MarketPanel({ wallet, chainId }: Props) {
             <div style={{ marginBottom:20 }}>
               <div className="section-eyebrow">Autonomous Agent</div>
               <div className="section-title">Run Trading Agent</div>
-              <div className="section-sub">Load model → RL inference → KeeperHub → Uniswap V3</div>
+              <div className="section-sub">Load model → RL inference → TradingExecutor → Uniswap V3</div>
             </div>
             <div style={{ display:"flex", gap:6, marginBottom:20, flexWrap:"wrap" }}>
-              {["agent.py","KeeperHub","Uniswap V3","0G Storage"].map(p=><span key={p} className="pill">{p}</span>)}
+              {["agent.py","TradingExecutor","Uniswap V3","0G Storage"].map(p=><span key={p} className="pill">{p}</span>)}
             </div>
             <button className="btn btn-primary btn-full btn-lg" disabled={trading} onClick={runAgent} style={{ marginBottom:16 }}>
               {trading?<><span className="anim-spin">⟳</span> Running…</>:"⚡ Run Trading Agent →"}
@@ -374,7 +426,7 @@ export default function MarketPanel({ wallet, chainId }: Props) {
                 <div style={{ fontSize:22, fontWeight:800, color:signal.action==="BUY"?"var(--green)":"var(--orange)", letterSpacing:"-0.05em", minWidth:54 }}>{signal.action}</div>
                 <div style={{ flex:1 }}>
                   <div style={{ fontSize:13, fontWeight:600 }}>{signal.amount} {signal.from} → {signal.to}</div>
-                  <div style={{ fontSize:11.5, color:"var(--text-secondary)", marginTop:2 }}>Confidence: <strong>{signal.confidence}%</strong> · Uniswap V3 via KeeperHub</div>
+                  <div style={{ fontSize:11.5, color:"var(--text-secondary)", marginTop:2 }}>Confidence: <strong>{signal.confidence}%</strong> · Uniswap V3 via TradingExecutor</div>
                 </div>
                 <span className={`badge ${signal.action==="BUY"?"badge-green":"badge-orange"}`}>
                   <span className={`dot ${signal.action==="BUY"?"dot-green":"dot-orange"}`} />Executed
@@ -382,7 +434,7 @@ export default function MarketPanel({ wallet, chainId }: Props) {
               </div>
             )}
             <div className="alert alert-muted" style={{ marginTop:16, fontSize:11.5 }}>
-              Reads your Model NFT's CID, runs inference via <span className="code">agent.py</span>, then submits the swap through KeeperHub's MEV-protected relay.
+              Reads your Model NFT's CID, runs inference via <span className="code">agent.py</span>, then submits the swap through TradingExecutor's MEV-protected relay.
             </div>
           </div>
           <div className="card" style={{ overflow:"hidden" }}>

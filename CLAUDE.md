@@ -115,7 +115,7 @@ Test gates: **130/130 forge** + **13/13 pytest** all green. TS smoke requires pr
 | Python zkML pipeline (AlphaMLP, EZKL, ~38s, 29 KB proofs) | ✅ |
 | TS orchestrator + audit-submitter | ✅ |
 | MetaAgentRegistry / MetaAgentVault | ⏳ Plan 2 |
-| KeeperHub + Uniswap V3 trading runtime | ⏳ Plan 2 |
+| TradingExecutor + Uniswap V3 trading runtime | ⏳ Plan 2 |
 | Render/RunPod cloud GPU adapter | ⏳ Plan 3 |
 | Frontend additions (model browser, leaderboard) | ⏳ Plan 3 |
 

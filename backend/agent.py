@@ -42,7 +42,7 @@ args = parser.parse_args()
 
 ZG_URL          = os.getenv("ZG_STORAGE_URL", "")
 KEEPERHUB_KEY   = os.getenv("KEEPERHUB_API_KEY", "")
-KEEPERHUB_URL   = "https://api.keeperhub.io/v1/workflows"
+KEEPERHUB_URL   = os.getenv("KEEPERHUB_API_URL", "https://api.keeperhub.com/v1/workflows")
 
 # ── Load model ────────────────────────────────────────────────────────────────
 def load_from_cid(cid: str) -> dict:

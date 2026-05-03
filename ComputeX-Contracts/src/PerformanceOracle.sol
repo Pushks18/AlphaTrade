@@ -140,6 +140,19 @@ contract PerformanceOracle {
         emit AuditAccepted(sub.tokenId, sub.epoch, sharpeBps, nTrades);
     }
 
+    /// @notice Demo-mode shortcut: write a Sharpe score directly without a
+    ///         full EZKL audit. Restricted to admin. Production deployments
+    ///         should NOT expose this — kept guarded so only the trusted admin
+    ///         key can call it. Used by the frontend "Submit Audit (demo)"
+    ///         button while real prove.py runs out-of-band.
+    function submitAuditDemo(uint256 tokenId, uint256 sharpeBps, uint256 epoch) external onlyAdmin {
+        require(sharpeBps <= 10_000, "Oracle: bps too large");
+        lastSharpe[tokenId] = sharpeBps;
+        lastEpoch[tokenId]  = epoch;
+        IModelNFTOracleHook(modelNFT).setPerformanceScore(tokenId, sharpeBps);
+        emit AuditAccepted(tokenId, epoch, sharpeBps, 0);
+    }
+
     /// @notice Submit a contradicting audit on the same epoch. If the freshly
     ///         verified Sharpe diverges from the recorded one beyond
     ///         `slashToleranceBps`, the model NFT's creator stake is split:

@@ -11,7 +11,9 @@ interface Props {
 
 const NET: Record<number, { label: string; dot: string }> = {
   31337:    { label: "Local Anvil", dot: "dot-orange" },
-  11155111: { label: "Sepolia",    dot: "dot-blue"   },
+  11155111: { label: "Sepolia",     dot: "dot-blue"   },
+  16601:    { label: "0G Galileo",  dot: "dot-purple" },
+  1:        { label: "Mainnet",     dot: "dot-green"  },
 };
 
 export default function Header({ wallet, setWallet, chainId, setChainId }: Props) {
@@ -63,8 +65,8 @@ export default function Header({ wallet, setWallet, chainId, setChainId }: Props
         {/* Numbered nav — AgentBazaar style */}
         <nav style={{ display: "flex", gap: 0, alignItems: "center" }}>
           {[
-            { num: "01", label: "PLATFORM", href: "#" },
-            { num: "02", label: "DOCS",     href: "#" },
+            { num: "01", label: "PLATFORM", href: "/" },
+            { num: "02", label: "DOCS",     href: "/docs" },
             { num: "03", label: "GITHUB",   href: "https://github.com" },
           ].map(link => (
             <a

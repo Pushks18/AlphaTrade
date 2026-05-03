@@ -5,14 +5,14 @@ import {Test} from "forge-std/Test.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {MetaAgentVault} from "../src/MetaAgentVault.sol";
 import {MockERC20}      from "./mocks/MockERC20.sol";
-import {MockKeeperHub}  from "./mocks/MockKeeperHub.sol";
+import {MockTradingExecutor}  from "./mocks/MockTradingExecutor.sol";
 import {MockModelNFT}   from "./mocks/MockModelNFT.sol";
 
 contract MetaAgentVaultCoreTest is Test {
     MetaAgentVault internal vault;
     MockERC20      internal usdc;
     MockERC20      internal weth;
-    MockKeeperHub  internal hub;
+    MockTradingExecutor  internal hub;
 
     address internal registry = address(0xAA01);
     address internal lp       = address(0xB2);
@@ -25,7 +25,7 @@ contract MetaAgentVaultCoreTest is Test {
     function setUp() public {
         usdc = new MockERC20("USD Coin", "USDC", 6);
         weth = new MockERC20("WETH", "WETH", 18);
-        hub  = new MockKeeperHub();
+        hub  = new MockTradingExecutor();
 
         basket[0] = address(weth);
         basket[1] = address(new MockERC20("wBTC","wBTC",8));
@@ -92,7 +92,7 @@ contract MetaAgentVaultCoreTest is Test {
         vm.stopPrank();
 
         // Airdrop WETH into the vault (simulates a previous swap)
-        // MockKeeperHub.priceOf returns 1e18 by default (1 WETH = 1 USDC unit)
+        // MockTradingExecutor.priceOf returns 1e18 by default (1 WETH = 1 USDC unit)
         weth.mint(address(vault), 500e6); // 500 WETH (in 18-decimal units but priced 1:1)
 
         // totalAssets = USDC + (WETH * price / 1e18) = 1000e6 + (500e6 * 1e18 / 1e18) = 1500e6
@@ -103,7 +103,7 @@ contract MetaAgentVaultCoreTest is Test {
 contract MetaAgentVaultModelTest is Test {
     MetaAgentVault internal vault;
     MockERC20      internal usdc;
-    MockKeeperHub  internal hub;
+    MockTradingExecutor  internal hub;
     MockModelNFT   internal modelNFT;
 
     address internal registry = address(0xAA02);
@@ -115,7 +115,7 @@ contract MetaAgentVaultModelTest is Test {
 
     function setUp() public {
         usdc     = new MockERC20("USDC","USDC",6);
-        hub      = new MockKeeperHub();
+        hub      = new MockTradingExecutor();
         modelNFT = new MockModelNFT();
 
         basket2[4] = address(usdc);
@@ -224,7 +224,7 @@ contract MetaAgentVaultTradeTest is Test {
     MetaAgentVault internal vault;
     MockERC20      internal usdc;
     MockERC20      internal weth;
-    MockKeeperHub  internal hub;
+    MockTradingExecutor  internal hub;
 
     address internal registry;
     uint256 internal operatorKey = 0xA11CE_DEAD_BEEF;
@@ -238,7 +238,7 @@ contract MetaAgentVaultTradeTest is Test {
 
         usdc = new MockERC20("USDC","USDC",6);
         weth = new MockERC20("WETH","WETH",18);
-        hub  = new MockKeeperHub();
+        hub  = new MockTradingExecutor();
 
         basket[0] = address(weth);
         basket[1] = basket[2] = basket[3] = address(weth);
@@ -327,7 +327,7 @@ contract MetaAgentVaultTradeTest is Test {
 contract MetaAgentVaultHarvestTest is Test {
     MetaAgentVault internal vault;
     MockERC20      internal usdc;
-    MockKeeperHub  internal hub;
+    MockTradingExecutor  internal hub;
 
     address internal registry;
     address internal operator = address(0x0ABC);
@@ -339,7 +339,7 @@ contract MetaAgentVaultHarvestTest is Test {
         registry = address(new MockRegistry(operator, 0));
 
         usdc = new MockERC20("USDC","USDC",6);
-        hub  = new MockKeeperHub();
+        hub  = new MockTradingExecutor();
         basket[4] = address(usdc);
         for (uint256 i = 0; i < 4; i++) basket[i] = address(usdc);
 

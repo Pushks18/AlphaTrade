@@ -4,7 +4,7 @@ pragma solidity ^0.8.20;
 import {Test} from "forge-std/Test.sol";
 import {MetaAgentRegistry} from "../src/MetaAgentRegistry.sol";
 import {MetaAgentVault}    from "../src/MetaAgentVault.sol";
-import {KeeperHub}         from "../src/KeeperHub.sol";
+import {TradingExecutor}         from "../src/TradingExecutor.sol";
 import {MockERC20}         from "./mocks/MockERC20.sol";
 import {MockSwapRouter}    from "./mocks/MockSwapRouter.sol";
 
@@ -27,7 +27,7 @@ contract MockV3Factory {
 
 contract MetaAgentEndToEndTest is Test {
     MetaAgentRegistry internal reg;
-    KeeperHub         internal hub;
+    TradingExecutor         internal hub;
     MockERC20         internal usdc;
     MockERC20         internal weth;
     MockSwapRouter    internal router;
@@ -47,7 +47,7 @@ contract MetaAgentEndToEndTest is Test {
         router = new MockSwapRouter();
 
         // Hub deployed with test contract as owner
-        hub = new KeeperHub(address(this), address(router));
+        hub = new TradingExecutor(address(this), address(router));
 
         basket[0] = address(weth);
         basket[1] = basket[2] = basket[3] = address(weth);
@@ -93,7 +93,7 @@ contract MetaAgentEndToEndTest is Test {
         address vaultAddr = reg.vaultOf(agentId);
         MetaAgentVault vault = MetaAgentVault(vaultAddr);
 
-        // 2. Vault registered in KeeperHub
+        // 2. Vault registered in TradingExecutor
         assertTrue(hub.isVault(vaultAddr));
 
         // 3. LP deposits USDC

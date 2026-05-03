@@ -8,12 +8,12 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC721}   from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {IKeeperHub} from "./interfaces/IKeeperHub.sol";
+import {ITradingExecutor} from "./interfaces/ITradingExecutor.sol";
 import {IModelMarketplace} from "./interfaces/IModelMarketplace.sol";
 
 /// @title MetaAgentVault (stub — full implementation in Task 4)
 /// @notice ERC-4626 vault that holds USDC on behalf of a MetaAgent NFT.
-///         Deployed by MetaAgentRegistry.deploy(); receives swap rights via KeeperHub.
+///         Deployed by MetaAgentRegistry.deploy(); receives swap rights via TradingExecutor.
 contract MetaAgentVault is ERC4626, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -23,7 +23,7 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
     bytes32 public immutable policyHash;
     address public immutable modelNFT;
     address public immutable modelMarketplace;
-    address public immutable keeperHub;
+    address public immutable tradingExecutor;
     address[5] public basket;
 
     uint256 public lastHarvestAssets;
@@ -48,21 +48,21 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
         bytes32 policyHash_,
         address modelNFT_,
         address modelMarketplace_,
-        address keeperHub_,
+        address tradingExecutor_,
         address[5] memory basket_
     )
         ERC20("MetaAgent Vault Shares", "MAVS")
         ERC4626(IERC20(usdc_))
     {
         require(registry_  != address(0), "Vault: zero registry");
-        require(keeperHub_ != address(0), "Vault: zero hub");
+        require(tradingExecutor_ != address(0), "Vault: zero hub");
         registry         = registry_;
         vaultId          = vaultId_;
         perfFeeBps       = perfFeeBps_;
         policyHash       = policyHash_;
         modelNFT         = modelNFT_;
         modelMarketplace = modelMarketplace_;
-        keeperHub        = keeperHub_;
+        tradingExecutor        = tradingExecutor_;
         basket           = basket_;
     }
 
@@ -73,7 +73,7 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
             if (basket[i] == asset()) {
                 total += bal;
             } else {
-                uint256 price = IKeeperHub(keeperHub).priceOf(basket[i], asset(), 3000);
+                uint256 price = ITradingExecutor(tradingExecutor).priceOf(basket[i], asset(), 3000);
                 if (price > 0) total += (bal * price) / 1e18;
             }
         }
@@ -160,7 +160,7 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
             if (basket[i] == asset()) continue; // USDC is the quote currency, handled as residual
             uint256 current = IERC20(basket[i]).balanceOf(address(this));
             if (current == 0) continue;
-            uint256 price = IKeeperHub(keeperHub).priceOf(basket[i], asset(), 3000);
+            uint256 price = ITradingExecutor(tradingExecutor).priceOf(basket[i], asset(), 3000);
             if (price == 0) continue;
             uint256 currentValueUsdc = (current * price) / 1e18;
             uint256 targetValueUsdc  = (nav * weights[i]) / 10_000;
@@ -175,7 +175,7 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
         for (uint256 i = 0; i < 4; i++) {
             if (basket[i] == asset()) continue; // USDC is the quote currency, handled as residual
             if (weights[i] == 0) continue;
-            uint256 price = IKeeperHub(keeperHub).priceOf(basket[i], asset(), 3000);
+            uint256 price = ITradingExecutor(tradingExecutor).priceOf(basket[i], asset(), 3000);
             if (price == 0) continue;
             uint256 current = IERC20(basket[i]).balanceOf(address(this));
             uint256 currentValueUsdc = (current * price) / 1e18;
@@ -192,15 +192,15 @@ contract MetaAgentVault is ERC4626, ReentrancyGuard {
     }
 
     function _executeSwap(address tokenIn, address tokenOut, uint256 amountIn) private {
-        IKeeperHub.SwapInstruction[] memory swaps = new IKeeperHub.SwapInstruction[](1);
-        swaps[0] = IKeeperHub.SwapInstruction({
+        ITradingExecutor.SwapInstruction[] memory swaps = new ITradingExecutor.SwapInstruction[](1);
+        swaps[0] = ITradingExecutor.SwapInstruction({
             tokenIn:          tokenIn,
             tokenOut:         tokenOut,
             poolFee:          3000,
             amountIn:         amountIn,
             amountOutMinimum: 0
         });
-        IERC20(tokenIn).forceApprove(keeperHub, amountIn);
-        IKeeperHub(keeperHub).executeSwaps(swaps);
+        IERC20(tokenIn).forceApprove(tradingExecutor, amountIn);
+        ITradingExecutor(tradingExecutor).executeSwaps(swaps);
     }
 }

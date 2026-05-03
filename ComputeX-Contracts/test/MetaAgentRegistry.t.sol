@@ -3,13 +3,13 @@ pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
 import {MetaAgentRegistry} from "../src/MetaAgentRegistry.sol";
-import {KeeperHub}         from "../src/KeeperHub.sol";
+import {TradingExecutor}         from "../src/TradingExecutor.sol";
 import {MockERC20}         from "./mocks/MockERC20.sol";
 import {MockSwapRouter}    from "./mocks/MockSwapRouter.sol";
 
 contract MetaAgentRegistryTest is Test {
     MetaAgentRegistry internal reg;
-    KeeperHub         internal hub;
+    TradingExecutor         internal hub;
     MockERC20         internal usdc;
 
     address internal owner    = address(this); // test contract is deployer/owner
@@ -28,7 +28,7 @@ contract MetaAgentRegistryTest is Test {
 
         MockSwapRouter router = new MockSwapRouter();
         // Deploy hub with test contract as owner (so we can transfer later)
-        hub = new KeeperHub(address(this), address(router));
+        hub = new TradingExecutor(address(this), address(router));
 
         // Deploy registry
         reg = new MetaAgentRegistry(
@@ -60,7 +60,7 @@ contract MetaAgentRegistryTest is Test {
         assertTrue(vault != address(0));
     }
 
-    function test_deploy_vaultRegisteredInKeeperHub() public {
+    function test_deploy_vaultRegisteredInTradingExecutor() public {
         vm.prank(operator);
         uint256 agentId = reg.deploy(500, keccak256("policy-v1"));
         address vault = reg.vaultOf(agentId);

@@ -40,7 +40,7 @@ export default function PipelineViz({ activeTab }: { activeTab: Tab }) {
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <span className="pill">0G Chain</span>
           <span className="pill">ERC-7857</span>
-          <span className="pill">KeeperHub</span>
+          <span className="pill">TradingExecutor</span>
         </div>
       </div>
 

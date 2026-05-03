@@ -2,13 +2,13 @@
 pragma solidity ^0.8.20;
 
 import {Test} from "forge-std/Test.sol";
-import {KeeperHub}        from "../src/KeeperHub.sol";
-import {IKeeperHub}       from "../src/interfaces/IKeeperHub.sol";
+import {TradingExecutor}        from "../src/TradingExecutor.sol";
+import {ITradingExecutor}       from "../src/interfaces/ITradingExecutor.sol";
 import {MockERC20}        from "./mocks/MockERC20.sol";
 import {MockSwapRouter}   from "./mocks/MockSwapRouter.sol";
 
-contract KeeperHubTest is Test {
-    KeeperHub      internal hub;
+contract TradingExecutorTest is Test {
+    TradingExecutor      internal hub;
     MockSwapRouter internal router;
     MockERC20      internal usdc;
     MockERC20      internal weth;
@@ -22,7 +22,7 @@ contract KeeperHubTest is Test {
         usdc   = new MockERC20("USD Coin", "USDC", 6);
         weth   = new MockERC20("Wrapped Ether", "WETH", 18);
 
-        hub = new KeeperHub(owner, address(router));
+        hub = new TradingExecutor(owner, address(router));
 
         vm.prank(owner);
         hub.registerVault(vault);
@@ -39,17 +39,17 @@ contract KeeperHubTest is Test {
     }
 
     function test_executeSwaps_revertsForUnregisteredCaller() public {
-        IKeeperHub.SwapInstruction[] memory s = new IKeeperHub.SwapInstruction[](0);
+        ITradingExecutor.SwapInstruction[] memory s = new ITradingExecutor.SwapInstruction[](0);
         vm.prank(caller);
-        vm.expectRevert(bytes("KeeperHub: not vault"));
+        vm.expectRevert(bytes("TradingExecutor: not vault"));
         hub.executeSwaps(s);
     }
 
     function test_executeSwaps_singleSwap_transfersTokens() public {
         usdc.mint(vault, 1000e6);
 
-        IKeeperHub.SwapInstruction[] memory swaps = new IKeeperHub.SwapInstruction[](1);
-        swaps[0] = IKeeperHub.SwapInstruction({
+        ITradingExecutor.SwapInstruction[] memory swaps = new ITradingExecutor.SwapInstruction[](1);
+        swaps[0] = ITradingExecutor.SwapInstruction({
             tokenIn:          address(usdc),
             tokenOut:         address(weth),
             poolFee:          3000,
@@ -71,8 +71,8 @@ contract KeeperHubTest is Test {
     function test_executeSwaps_emitsTradeExecuted() public {
         usdc.mint(vault, 1000e6);
 
-        IKeeperHub.SwapInstruction[] memory swaps = new IKeeperHub.SwapInstruction[](1);
-        swaps[0] = IKeeperHub.SwapInstruction({
+        ITradingExecutor.SwapInstruction[] memory swaps = new ITradingExecutor.SwapInstruction[](1);
+        swaps[0] = ITradingExecutor.SwapInstruction({
             tokenIn: address(usdc), tokenOut: address(weth),
             poolFee: 3000, amountIn: 100e6, amountOutMinimum: 0
         });
@@ -80,7 +80,7 @@ contract KeeperHubTest is Test {
         vm.startPrank(vault);
         usdc.approve(address(hub), 100e6);
         vm.expectEmit(true, false, false, false);
-        emit KeeperHub.TradeExecuted(vault, address(usdc), address(weth), 100e6, 100e6);
+        emit TradingExecutor.TradeExecuted(vault, address(usdc), address(weth), 100e6, 100e6);
         hub.executeSwaps(swaps);
         vm.stopPrank();
     }

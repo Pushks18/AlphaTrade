@@ -2,17 +2,33 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { ethers } from "ethers";
 import { getAddresses, GPU_MARKETPLACE_ABI } from "../lib/contracts";
+import type { FlowState } from "../page";
 
-interface Props { wallet: string | null; chainId: number; }
+interface Props { wallet: string | null; chainId: number; flow: FlowState; }
 function ts() { return new Date().toLocaleTimeString("en-US", { hour12: false }); }
 
+// Demo rows shown only when wallet is NOT connected (pre-wallet preview).
+// Once a wallet is connected we fetch the real list from chain.
 const MOCK_GPUS = [
-  { id: 0, name: "RTX 4090",  vram: "24GB",  price: "0.0012", util: 87, available: false },
-  { id: 1, name: "A100 80G",  vram: "80GB",  price: "0.0035", util: 0,  available: true  },
-  { id: 2, name: "RTX 3090",  vram: "24GB",  price: "0.0008", util: 45, available: true  },
-  { id: 3, name: "H100 NVL",  vram: "94GB",  price: "0.0060", util: 0,  available: true  },
-  { id: 4, name: "RTX 4080S", vram: "16GB",  price: "0.0009", util: 100,available: false },
+  { id: 0, name: "RTX 4090",  vram: "24GB",  price: "0.0012", util: 87, available: false, metadata: "ipfs://demo-rtx4090"  },
+  { id: 1, name: "A100 80G",  vram: "80GB",  price: "0.0035", util: 0,  available: true,  metadata: "ipfs://demo-a100"     },
+  { id: 2, name: "RTX 3090",  vram: "24GB",  price: "0.0008", util: 45, available: true,  metadata: "ipfs://demo-rtx3090"  },
+  { id: 3, name: "H100 NVL",  vram: "94GB",  price: "0.0060", util: 0,  available: true,  metadata: "ipfs://demo-h100"     },
+  { id: 4, name: "RTX 4080S", vram: "16GB",  price: "0.0009", util: 100,available: false, metadata: "ipfs://demo-rtx4080s" },
 ];
+
+interface ChainGpu { id: number; name: string; vram: string; price: string; util: number; available: boolean; metadata: string; }
+
+// Best-effort metadata parser. listGPU stores a freeform string; we try
+// to extract a model name and VRAM from common patterns. Falls back to id.
+function parseGpuMeta(metadata: string, id: number): { name: string; vram: string } {
+  const m = metadata.match(/RTX[\s-]?\d+\w*|A100[\s\w]*|H100[\s\w]*|H200[\s\w]*|L40[\s\w]*|MI300[\s\w]*/i);
+  const v = metadata.match(/(\d+)\s?GB/i);
+  return {
+    name: m ? m[0].replace(/\s+/g, " ").trim() : `GPU #${id}`,
+    vram: v ? `${v[1]}GB` : "—",
+  };
+}
 
 // ── Toast helper hook ──
 function useToast() {
@@ -25,7 +41,7 @@ function useToast() {
   return { toasts, show };
 }
 
-export default function GPUPanel({ wallet, chainId }: Props) {
+export default function GPUPanel({ wallet, chainId, flow }: Props) {
   const [metadata,    setMetadata]    = useState("ipfs://QmGpuSpecs-RTX4090-24GB");
   const [price,       setPrice]       = useState("0.001");
   const [gpuType,     setGpuType]     = useState("RTX 4090");
@@ -35,6 +51,7 @@ export default function GPUPanel({ wallet, chainId }: Props) {
   const [log,         setLog]         = useState<string[]>([]);
   const [busy,        setBusy]        = useState(false);
   const [totalGPUs,   setTotalGPUs]   = useState<number | null>(null);
+  const [chainGpus,   setChainGpus]   = useState<ChainGpu[] | null>(null); // null = not loaded yet
   const [activeView,  setActiveView]  = useState<"list" | "register">("list");
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [panelFlash,  setPanelFlash]  = useState(false);
@@ -76,6 +93,7 @@ export default function GPUPanel({ wallet, chainId }: Props) {
       setGpuId(id);
       setActiveView("list");
       fetchStats();
+      fetchChainGpus();
     } catch (e: any) {
       addLog(`${e.reason ?? e.message?.slice(0, 100)}`, "err");
       showToast("Transaction failed", "error");
@@ -86,12 +104,12 @@ export default function GPUPanel({ wallet, chainId }: Props) {
   async function selectGPU(id: number) {
     setSelectedRow(id);
     setGpuId(String(id));
+    flow.setLastGpuId(String(id));
     flashDetail();
     if (!window.ethereum) {
-      // Use mock data
       const mock = MOCK_GPUS.find(g => g.id === id);
       if (mock) {
-        setGpu({ provider: "0xMockProvider…", price: mock.price, metadata: `ipfs://QmSpecs-${mock.name}`, available: mock.available });
+        setGpu({ provider: "0xMockProvider…", price: mock.price, metadata: mock.metadata, available: mock.available });
         showToast(`GPU #${id} — ${mock.name} selected`, "info");
       }
       return;
@@ -99,23 +117,40 @@ export default function GPUPanel({ wallet, chainId }: Props) {
     try {
       const c = await getContract();
       const g = await c.getGPU(BigInt(id));
-      setGpu({ provider: g[0], price: ethers.formatEther(g[1]), metadata: g[2], available: g[3] });
+      const provider = g[0] as string;
+      if (!provider || provider === ethers.ZeroAddress) {
+        setGpu(null);
+        showToast(`GPU #${id} not listed on-chain — click + List GPU first`, "error");
+        return;
+      }
+      setGpu({ provider, price: ethers.formatEther(g[1]), metadata: g[2], available: g[3] });
       showToast(`GPU #${id} loaded`, "info");
     } catch {
-      const mock = MOCK_GPUS.find(g => g.id === id);
-      if (mock) setGpu({ provider: "0xMockProvider…", price: mock.price, metadata: `ipfs://QmSpecs-${mock.name}`, available: mock.available });
+      setGpu(null);
+      showToast(`GPU #${id} not found on-chain`, "error");
     }
   }
 
   async function fetchGPU() {
     if (!gpuId) return;
+    if (!window.ethereum) return showToast("Connect a wallet to fetch on-chain data", "error");
     try {
       const c = await getContract();
       const g = await c.getGPU(BigInt(gpuId));
-      setGpu({ provider: g[0], price: ethers.formatEther(g[1]), metadata: g[2], available: g[3] });
+      const provider = g[0] as string;
+      if (!provider || provider === ethers.ZeroAddress) {
+        setGpu(null);
+        showToast(`GPU #${gpuId} not listed on-chain`, "error");
+        return;
+      }
+      setGpu({ provider, price: ethers.formatEther(g[1]), metadata: g[2], available: g[3] });
       flashDetail();
       showToast(`GPU #${gpuId} fetched`, "info");
-    } catch (e: any) { addLog(`${e.message?.slice(0, 80)}`, "err"); }
+    } catch (e: any) {
+      setGpu(null);
+      showToast(`GPU #${gpuId} not found`, "error");
+      addLog(`${e.message?.slice(0, 80)}`, "err");
+    }
   }
 
   async function fetchStats() {
@@ -125,6 +160,50 @@ export default function GPUPanel({ wallet, chainId }: Props) {
       setTotalGPUs(Number(n));
     } catch {}
   }
+
+  // Pull every listed GPU from chain. Called on mount and after a successful list.
+  const fetchChainGpus = useCallback(async () => {
+    if (!window.ethereum) { setChainGpus(null); return; }
+    try {
+      const c = await getContract();
+      const next: bigint = await c.nextGpuId();
+      const total = Number(next);
+      const out: ChainGpu[] = [];
+      for (let i = 0; i < total; i++) {
+        try {
+          const g = await c.getGPU(BigInt(i));
+          const provider = g[0] as string;
+          if (!provider || provider === ethers.ZeroAddress) continue;
+          const meta = parseGpuMeta(g[2], i);
+          out.push({
+            id: i,
+            name: meta.name,
+            vram: meta.vram,
+            price: ethers.formatEther(g[1]),
+            util: 0,
+            available: g[3] as boolean,
+            metadata: g[2] as string,
+          });
+        } catch { /* skip */ }
+      }
+      setChainGpus(out);
+      setTotalGPUs(total);
+    } catch (e) {
+      setChainGpus([]);
+    }
+  }, [chainId]);
+
+  useEffect(() => { fetchChainGpus(); }, [fetchChainGpus]);
+
+  // Defer window-dependent decisions to after first client render to avoid
+  // hydration mismatch (server has no `window`, so it would always render MOCK).
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  const hasEthereum = mounted && typeof window !== "undefined" && !!window.ethereum;
+  const visibleGpus: ChainGpu[] = chainGpus !== null
+    ? chainGpus
+    : (hasEthereum ? [] : MOCK_GPUS);
+  const usingMock = chainGpus === null && !hasEthereum;
 
   const addr = getAddresses(chainId);
 
@@ -166,11 +245,12 @@ export default function GPUPanel({ wallet, chainId }: Props) {
             <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ fontWeight: 600, fontSize: 13 }}>Listed GPUs</span>
-                <span className="badge badge-gray">{MOCK_GPUS.length} total</span>
+                <span className="badge badge-gray">{visibleGpus.length} total</span>
+                {usingMock && <span className="badge badge-orange" style={{ fontSize: 10 }}>demo data</span>}
               </div>
               <div style={{ display: "flex", gap: 6 }}>
-                <span className="badge badge-green"><span className="dot dot-green" />{MOCK_GPUS.filter(g => g.available).length} available</span>
-                <span className="badge badge-gray">{MOCK_GPUS.filter(g => !g.available).length} busy</span>
+                <span className="badge badge-green"><span className="dot dot-green" />{visibleGpus.filter(g => g.available).length} available</span>
+                <span className="badge badge-gray">{visibleGpus.filter(g => !g.available).length} busy</span>
               </div>
             </div>
 
@@ -202,7 +282,22 @@ export default function GPUPanel({ wallet, chainId }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {MOCK_GPUS.map(g => (
+                {visibleGpus.length === 0 && (
+                  <tr>
+                    <td colSpan={7} style={{ padding: "32px 16px", textAlign: "center", color: "var(--text-secondary)" }}>
+                      <div style={{ fontSize: 13, marginBottom: 8 }}>
+                        No GPUs listed on-chain yet.
+                      </div>
+                      <button
+                        className="btn btn-sm btn-primary"
+                        onClick={() => setActiveView("register")}
+                      >
+                        + List the first GPU
+                      </button>
+                    </td>
+                  </tr>
+                )}
+                {visibleGpus.map(g => (
                   <tr
                     key={g.id}
                     className={selectedRow === g.id ? "row-selected" : ""}
@@ -270,9 +365,9 @@ export default function GPUPanel({ wallet, chainId }: Props) {
 
             {gpu ? (
               <div className="anim-fade-in">
-                {/* GPU name from mock */}
+                {/* GPU name banner */}
                 {selectedRow !== null && (() => {
-                  const m = MOCK_GPUS.find(g => g.id === selectedRow);
+                  const m = visibleGpus.find(g => g.id === selectedRow);
                   return m ? (
                     <div style={{
                       background: "var(--bg-raised)",
@@ -315,10 +410,18 @@ export default function GPUPanel({ wallet, chainId }: Props) {
 
                 {/* Go to Jobs CTA */}
                 {gpu.available && (
-                  <div className="alert alert-success" style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 11.5 }}>Ready to rent — switch to Compute Jobs tab</span>
+                  <button
+                    className="alert alert-success"
+                    onClick={() => flow.setTab("jobs")}
+                    style={{
+                      marginTop: 14, display: "flex", alignItems: "center",
+                      justifyContent: "space-between", width: "100%",
+                      cursor: "pointer", border: "none", textAlign: "left",
+                    }}
+                  >
+                    <span style={{ fontSize: 11.5 }}>Ready to rent — continue to Compute Jobs →</span>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                  </div>
+                  </button>
                 )}
               </div>
             ) : (

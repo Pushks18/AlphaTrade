@@ -5,9 +5,9 @@ import {Ownable}   from "@openzeppelin/contracts/access/Ownable.sol";
 import {IERC20}    from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ISwapRouter, IUniswapV3Pool, IUniswapV3Factory} from "./interfaces/IUniswapV3.sol";
-import {IKeeperHub} from "./interfaces/IKeeperHub.sol";
+import {ITradingExecutor} from "./interfaces/ITradingExecutor.sol";
 
-contract KeeperHub is IKeeperHub, Ownable {
+contract TradingExecutor is ITradingExecutor, Ownable {
     using SafeERC20 for IERC20;
 
     ISwapRouter        public immutable router;
@@ -23,7 +23,7 @@ contract KeeperHub is IKeeperHub, Ownable {
     );
 
     constructor(address initialOwner, address router_) Ownable(initialOwner) {
-        require(router_ != address(0), "KeeperHub: zero router");
+        require(router_ != address(0), "TradingExecutor: zero router");
         router = ISwapRouter(router_);
     }
 
@@ -32,7 +32,7 @@ contract KeeperHub is IKeeperHub, Ownable {
     }
 
     function registerVault(address vault) external onlyOwner {
-        require(vault != address(0), "KeeperHub: zero vault");
+        require(vault != address(0), "TradingExecutor: zero vault");
         isVault[vault] = true;
         emit VaultRegistered(vault);
     }
@@ -40,7 +40,7 @@ contract KeeperHub is IKeeperHub, Ownable {
     function executeSwaps(SwapInstruction[] calldata swaps)
         external override returns (uint256[] memory amountsOut)
     {
-        require(isVault[msg.sender], "KeeperHub: not vault");
+        require(isVault[msg.sender], "TradingExecutor: not vault");
         amountsOut = new uint256[](swaps.length);
         for (uint256 i = 0; i < swaps.length; i++) {
             SwapInstruction calldata s = swaps[i];

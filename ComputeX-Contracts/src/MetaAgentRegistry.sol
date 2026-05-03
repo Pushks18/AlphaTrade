@@ -3,21 +3,21 @@ pragma solidity ^0.8.20;
 
 import {ERC721}         from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import {Ownable}        from "@openzeppelin/contracts/access/Ownable.sol";
-import {KeeperHub}      from "./KeeperHub.sol";
+import {TradingExecutor}      from "./TradingExecutor.sol";
 import {MetaAgentVault} from "./MetaAgentVault.sol";
 
 /// @title MetaAgentRegistry
 /// @notice Issues soulbound-style ERC-721 NFTs representing on-chain meta-agents.
-///         Each deploy() creates a fresh MetaAgentVault, registers it with KeeperHub,
+///         Each deploy() creates a fresh MetaAgentVault, registers it with TradingExecutor,
 ///         and mints an NFT to the caller.
 ///
-///         Ownership of KeeperHub must be transferred to this contract before any
+///         Ownership of TradingExecutor must be transferred to this contract before any
 ///         deploy() call so that registerVault() succeeds.
 contract MetaAgentRegistry is ERC721, Ownable {
     uint256 public nextAgentId;
 
     address public immutable usdc;
-    address public immutable keeperHub;
+    address public immutable tradingExecutor;
     address public immutable modelNFT;
     address public immutable modelMarketplace;
     address[5] public basket;
@@ -35,15 +35,15 @@ contract MetaAgentRegistry is ERC721, Ownable {
     constructor(
         address initialOwner,
         address usdc_,
-        address keeperHub_,
+        address tradingExecutor_,
         address modelNFT_,
         address modelMarketplace_,
         address[5] memory basket_
     ) ERC721("MetaAgent", "MAGNT") Ownable(initialOwner) {
         require(usdc_      != address(0), "Registry: zero usdc");
-        require(keeperHub_ != address(0), "Registry: zero hub");
+        require(tradingExecutor_ != address(0), "Registry: zero hub");
         usdc             = usdc_;
-        keeperHub        = keeperHub_;
+        tradingExecutor        = tradingExecutor_;
         modelNFT         = modelNFT_;
         modelMarketplace = modelMarketplace_;
         basket           = basket_;
@@ -69,12 +69,12 @@ contract MetaAgentRegistry is ERC721, Ownable {
             policyHash,
             modelNFT,
             modelMarketplace,
-            keeperHub,
+            tradingExecutor,
             basket
         );
 
         vaultOf[agentId] = address(vault);
-        KeeperHub(keeperHub).registerVault(address(vault));
+        TradingExecutor(tradingExecutor).registerVault(address(vault));
 
         _mint(msg.sender, agentId);
         emit AgentDeployed(agentId, msg.sender, address(vault), perfFeeBps, policyHash);

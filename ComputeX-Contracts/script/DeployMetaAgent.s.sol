@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {Script, console2} from "forge-std/Script.sol";
-import {KeeperHub}         from "../src/KeeperHub.sol";
+import {TradingExecutor}         from "../src/TradingExecutor.sol";
 import {MetaAgentRegistry} from "../src/MetaAgentRegistry.sol";
 import {MockERC20}         from "../test/mocks/MockERC20.sol";
 
@@ -32,8 +32,8 @@ contract DeployMetaAgent is Script {
 
         address[5] memory basket = [WETH, wbtc, link, uni, usdc];
 
-        // 1. Deploy KeeperHub with deployer as temporary owner
-        KeeperHub hub = new KeeperHub(deployer, SWAP_ROUTER);
+        // 1. Deploy TradingExecutor with deployer as temporary owner
+        TradingExecutor hub = new TradingExecutor(deployer, SWAP_ROUTER);
         hub.setFactory(UNI_FACTORY);
 
         // 2. Deploy MetaAgentRegistry
@@ -46,12 +46,12 @@ contract DeployMetaAgent is Script {
             basket
         );
 
-        // 3. Transfer KeeperHub ownership to Registry so deploy() can registerVault
+        // 3. Transfer TradingExecutor ownership to Registry so deploy() can registerVault
         hub.transferOwnership(address(reg));
 
         vm.stopBroadcast();
 
-        console2.log("KeeperHub:         ", address(hub));
+        console2.log("TradingExecutor:         ", address(hub));
         console2.log("MetaAgentRegistry: ", address(reg));
         console2.log("MockUSDC:          ", usdc);
         console2.log("MockWBTC:          ", wbtc);

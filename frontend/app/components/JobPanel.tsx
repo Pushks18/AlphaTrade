@@ -1,9 +1,10 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import { getAddresses, GPU_MARKETPLACE_ABI } from "../lib/contracts";
+import type { FlowState } from "../page";
 
-interface Props { wallet: string | null; chainId: number; }
+interface Props { wallet: string | null; chainId: number; flow: FlowState; }
 
 const STATUS_CFG: Record<number, { label: string; badge: string; dot: string }> = {
   0: { label: "Created",   badge: "badge-orange", dot: "dot-orange" },
@@ -14,10 +15,16 @@ const STATUS_CFG: Record<number, { label: string; badge: string; dot: string }> 
 
 function ts() { return new Date().toLocaleTimeString("en-US", { hour12: false }); }
 
-export default function JobPanel({ wallet, chainId }: Props) {
+export default function JobPanel({ wallet, chainId, flow }: Props) {
   const [gpuId,    setGpuId]    = useState("0");
   const [duration, setDuration] = useState("2");
   const [jobId,    setJobId]    = useState("");
+
+  // Auto-prefill gpuId when arriving from the GPU Market tab.
+  useEffect(() => {
+    if (flow.lastGpuId && flow.lastGpuId !== gpuId) setGpuId(flow.lastGpuId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flow.lastGpuId]);
   const [job,      setJob]      = useState<any>(null);
   const [log,      setLog]      = useState<string[]>([]);
   const [busy,     setBusy]     = useState(false);
@@ -48,8 +55,17 @@ export default function JobPanel({ wallet, chainId }: Props) {
     setBusy(true); setPhase("renting");
     try {
       const c = await getContract(true);
-      const g = await c.getGPU(BigInt(gpuId));
-      if (g[0] === ethers.ZeroAddress) { addLog("GPU not found", "err"); setBusy(false); return; }
+      let g;
+      try {
+        g = await c.getGPU(BigInt(gpuId));
+      } catch {
+        addLog(`GPU #${gpuId} not listed on-chain — go to GPU Market and list one first`, "err");
+        setPhase("idle"); setBusy(false); return;
+      }
+      if (!g[0] || g[0] === ethers.ZeroAddress) {
+        addLog(`GPU #${gpuId} not listed on-chain — go to GPU Market and list one first`, "err");
+        setPhase("idle"); setBusy(false); return;
+      }
       const totalCost = g[1] * BigInt(duration);
       addLog(`Renting GPU #${gpuId} for ${duration}h — ${ethers.formatEther(totalCost)} ETH escrowed`);
       const tx = await c.rentGPU(BigInt(gpuId), BigInt(duration), { value: totalCost });
@@ -59,6 +75,7 @@ export default function JobPanel({ wallet, chainId }: Props) {
       const jid = ev ? ev.args[0].toString() : "?";
       addLog(`Job created — jobId = ${jid}`, "ok");
       setJobId(jid);
+      flow.setLastJobId(jid);
       setPhase("training");
       addLog(`Backend listener detected JobCreated event`, "event");
       addLog(`Launching train.py on price data…`, "event");
@@ -273,6 +290,22 @@ export default function JobPanel({ wallet, chainId }: Props) {
             <button className="btn btn-danger btn-sm btn-full" disabled={busy || !jobId || (job?.status === 3)} onClick={cancelJob}>
               Cancel Job
             </button>
+
+            {/* Continue → Mint NFT (shown once job is completed) */}
+            {(job?.status === 2 || phase === "done") && jobId && (
+              <button
+                className="alert alert-success"
+                onClick={() => flow.setTab("nfts")}
+                style={{
+                  marginTop: 4, display: "flex", alignItems: "center",
+                  justifyContent: "space-between", width: "100%",
+                  cursor: "pointer", border: "none", textAlign: "left",
+                }}
+              >
+                <span style={{ fontSize: 11.5 }}>Job complete — continue to Mint Model NFT →</span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+              </button>
+            )}
           </div>
         </div>
       </div>

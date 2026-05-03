@@ -1,11 +1,15 @@
 // Anvil deterministic addresses (fresh anvil run)
+// Plan 1: deploy via `forge script script/Deploy.s.sol:Deploy`
+// Plan 2: deploy via `forge script script/DeployMetaAgentLocal.s.sol:DeployMetaAgentLocal`
 export const ANVIL_ADDRESSES = {
   GPUMarketplace:     "0x5FbDB2315678afecb367f032d93F642f64180aa3",
   ModelNFT:           "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
   ModelMarketplace:   "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
-  MetaAgentRegistry:  "",
-  KeeperHub:          "",
-  MockUSDC:           "",
+  PerformanceOracle:  "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9",
+  // Plan 2 — MockTradingExecutor-backed (no Uniswap on Anvil)
+  MetaAgentRegistry:  "0x0B306BF915C4d645ff596e518fAf3F9669b97016",
+  TradingExecutor:    "0x9A676e781A523b5d0C0e43731313A708CB607508",
+  MockUSDC:           "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
 };
 
 // Ethereum Sepolia live addresses
@@ -13,9 +17,10 @@ export const SEPOLIA_ADDRESSES = {
   GPUMarketplace:     "0xefE063A1876Bf0FB4Bb8BF1566A5B74B000f4654",
   ModelNFT:           "0x7695a2e4D5314116F543a89CF6eF74084aa5d0d9",
   ModelMarketplace:   "0xF602913E809140B9D067caEEAF37Df0Bdd9db806",
+  PerformanceOracle:  "0x0000000000000000000000000000000000000000", // TODO Sepolia oracle addr
   // Plan 2 — deployed 2026-05-01
   MetaAgentRegistry:  "0x7EE3d703B7304909a9Ecee8eE98DbacA0556A8F5",
-  KeeperHub:          "0xbC8c435B2343493693f09b9E3e65D8141D69499d",
+  TradingExecutor:          "0xbC8c435B2343493693f09b9E3e65D8141D69499d",
   MockUSDC:           "0x5aC67ADcd97E0390c66eB8a52305dC13D05103e5",
 };
 
@@ -41,7 +46,7 @@ export const GPU_MARKETPLACE_ABI = [
 ];
 
 export const MODEL_NFT_ABI = [
-  "function mintModel(uint256 jobId, string modelCID, string proofCID, string description) external returns (uint256)",
+  "function mintModel(uint256 jobId, string modelCID, string proofCID, string description, bytes32 modelWeightsHash) external payable returns (uint256)",
   "function tokenURI(uint256 tokenId) external view returns (string)",
   "function ownerOf(uint256 tokenId) external view returns (address)",
   "function creator(uint256 tokenId) external view returns (address)",
@@ -66,19 +71,30 @@ export const MODEL_MARKETPLACE_ABI = [
   "event ModelSold(uint256 indexed tokenId, address indexed buyer, uint256 price, uint256 sellerAmount, uint256 royalty, uint256 fee)",
 ];
 
+export const PERFORMANCE_ORACLE_ABI = [
+  "function admin() external view returns (address)",
+  "function lastSharpe(uint256 tokenId) external view returns (uint256)",
+  "function lastEpoch(uint256 tokenId) external view returns (uint256)",
+  "function submitAuditDemo(uint256 tokenId, uint256 sharpeBps, uint256 epoch) external",
+  "event AuditAccepted(uint256 indexed tokenId, uint256 indexed epoch, uint256 sharpeBps, uint256 nTrades)",
+];
+
 export const ERC20_ABI = [
   "function approve(address spender, uint256 amount) external returns (bool)",
   "function allowance(address owner, address spender) external view returns (uint256)",
   "function balanceOf(address account) external view returns (uint256)",
   "function decimals() external view returns (uint8)",
+  "function symbol() external view returns (string)",
   "function mint(address to, uint256 amount) external",
 ];
+
+export const BASKET_LABELS = ["WETH", "WBTC", "LINK", "UNI", "USDC"];
 
 export const META_AGENT_REGISTRY_ABI = [
   "function nextAgentId() external view returns (uint256)",
   "function vaultOf(uint256 agentId) external view returns (address)",
   "function usdc() external view returns (address)",
-  "function keeperHub() external view returns (address)",
+  "function tradingExecutor() external view returns (address)",
   "function deploy(uint16 perfFeeBps, bytes32 policyHash) external returns (uint256)",
   "event AgentDeployed(uint256 indexed agentId, address indexed operator, address vault, uint16 perfFeeBps)",
 ];
@@ -100,10 +116,36 @@ export const META_AGENT_VAULT_ABI = [
   "event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares)",
   "event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares)",
   "event Harvested(uint256 nav, uint256 gain, uint256 feeShares)",
+  "event TradeExecuted(uint256 indexed blockNumber, uint256 navBefore)",
+  "event ModelDeposited(uint256 indexed tokenId)",
 ];
 
+// 0G Galileo testnet (chainId 16601). Populate addresses after running:
+//   forge script script/DeployZeroG.s.sol:DeployZeroG --rpc-url $ZG_RPC_URL --broadcast --legacy
+// Then copy the printed addresses into ZEROG_ADDRESSES below.
+export const ZEROG_ADDRESSES = {
+  GPUMarketplace:     "0x0000000000000000000000000000000000000000",
+  ModelNFT:           "0x0000000000000000000000000000000000000000",
+  ModelMarketplace:   "0x0000000000000000000000000000000000000000",
+  PerformanceOracle:  "0x0000000000000000000000000000000000000000",
+  MetaAgentRegistry:  "0x0000000000000000000000000000000000000000",
+  TradingExecutor:    "0x0000000000000000000000000000000000000000",
+  MockUSDC:           "0x0000000000000000000000000000000000000000",
+};
+
 export function getAddresses(chainId: number) {
-  if (chainId === 31337) return ANVIL_ADDRESSES;
+  if (chainId === 31337)    return ANVIL_ADDRESSES;
   if (chainId === 11155111) return SEPOLIA_ADDRESSES;
-  return ANVIL_ADDRESSES; // default
+  if (chainId === 16601)    return ZEROG_ADDRESSES;   // 0G Galileo testnet
+  return ANVIL_ADDRESSES;
+}
+
+export function chainName(chainId: number): string {
+  switch (chainId) {
+    case 31337:    return "Anvil";
+    case 11155111: return "Sepolia";
+    case 16601:    return "0G Galileo";
+    case 1:        return "Ethereum";
+    default:       return `Chain ${chainId}`;
+  }
 }
